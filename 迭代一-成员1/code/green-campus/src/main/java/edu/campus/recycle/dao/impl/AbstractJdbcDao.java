@@ -68,6 +68,7 @@ public abstract class AbstractJdbcDao<T> {
             conn = DbUtil.getInstance().currentConnection();
             return callback.doInConnection(conn);
         } catch (SQLException e) {
+            DbUtil.getInstance().markRollbackOnly();
             LOG.log(Level.SEVERE, "[" + tableName() + "] 数据访问失败：" + e.getMessage(), e);
             throw DataAccessException.of("数据访问失败（" + tableName() + "），请稍后重试", e);
         } finally {

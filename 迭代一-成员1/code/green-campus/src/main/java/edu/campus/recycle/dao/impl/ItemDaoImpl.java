@@ -157,7 +157,7 @@ public class ItemDaoImpl extends AbstractJdbcDao<Item> implements ItemDao {
         sql.append(" ORDER BY ").append(resolveSortStrategy(query.getSortByOrDefault()).orderByClause());
         sql.append(" LIMIT ? OFFSET ?");
         params.add(query.getLimit());
-        params.add(query.getOffset());
+        params.add((long) (Math.max(query.getPageNo(), 1) - 1) * query.getLimit());
         return queryList(sql.toString(), ROW_MAPPER, params.toArray());
     }
 

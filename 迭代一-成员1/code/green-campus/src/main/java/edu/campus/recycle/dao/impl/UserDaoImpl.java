@@ -131,8 +131,9 @@ public class UserDaoImpl extends AbstractJdbcDao<User> implements UserDao {
         List<Object> params = new ArrayList<>();
         appendCondition(sql, params, keyword, role);
         sql.append(" ORDER BY id LIMIT ? OFFSET ?");
-        params.add(pageSize <= 0 ? 10 : pageSize);
-        params.add(Math.max(pageNo, 1) - 1 < 0 ? 0 : (Math.max(pageNo, 1) - 1) * (pageSize <= 0 ? 10 : pageSize));
+        int size = pageSize <= 0 ? 10 : Math.min(pageSize, 100);
+        params.add(size);
+        params.add((long) (Math.max(pageNo, 1) - 1) * size);
         return queryList(sql.toString(), ROW_MAPPER, params.toArray());
     }
 

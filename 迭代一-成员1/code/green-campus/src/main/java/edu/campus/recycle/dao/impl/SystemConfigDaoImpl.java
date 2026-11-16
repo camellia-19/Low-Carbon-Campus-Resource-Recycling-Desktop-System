@@ -107,16 +107,10 @@ public class SystemConfigDaoImpl extends AbstractJdbcDao<SystemConfig> implement
 
     @Override
     public int upsert(String key, String value, String description) {
-        int updated = executeUpdate("UPDATE " + TABLE + " SET config_value = ?, description = ?,"
-                + " updated_at = ? WHERE config_key = ?", value, description,
-                formatDateTime(LocalDateTime.now()), key);
-        if (updated > 0) {
-            return updated;
-        }
-        SystemConfig config = new SystemConfig();
-        config.setConfigKey(key);
-        config.setConfigValue(value);
-        config.setDescription(description);
-        return insert(config);
+        return executeUpdate("INSERT INTO " + TABLE
+                        + " (config_key, config_value, description, updated_at) VALUES (?, ?, ?, ?)"
+                        + " ON CONFLICT(config_key) DO UPDATE SET config_value = excluded.config_value,"
+                        + " description = excluded.description, updated_at = excluded.updated_at",
+                key, value, description, formatDateTime(LocalDateTime.now()));
     }
 }

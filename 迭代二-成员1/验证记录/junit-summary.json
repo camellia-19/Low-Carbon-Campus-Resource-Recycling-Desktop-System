@@ -1,0 +1,44 @@
+[
+  {
+    "Suite": "edu.campus.recycle.config.DatabaseInitializerTest",
+    "Tests": 10,
+    "Failures": 0,
+    "Errors": 0,
+    "Skipped": 0
+  },
+  {
+    "Suite": "edu.campus.recycle.dao.DaoPersistenceTest",
+    "Tests": 29,
+    "Failures": 0,
+    "Errors": 0,
+    "Skipped": 0
+  },
+  {
+    "Suite": "edu.campus.recycle.dao.DataLayerIntegrationTest",
+    "Tests": 3,
+    "Failures": 0,
+    "Errors": 0,
+    "Skipped": 0
+  },
+  {
+    "Suite": "edu.campus.recycle.util.DbUtilTest",
+    "Tests": 11,
+    "Failures": 0,
+    "Errors": 0,
+    "Skipped": 0
+  },
+  {
+    "Suite": "edu.campus.recycle.util.PasswordUtilTest",
+    "Tests": 5,
+    "Failures": 0,
+    "Errors": 0,
+    "Skipped": 0
+  },
+  {
+    "Suite": "edu.campus.recycle.util.ValidatorTest",
+    "Tests": 6,
+    "Failures": 0,
+    "Errors": 0,
+    "Skipped": 0
+  }
+]

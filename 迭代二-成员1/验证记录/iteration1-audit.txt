@@ -1,0 +1,32 @@
+=== 迭代一交付物验收 @ C:\Users\wanhe\Desktop\软件构造\迭代一-成员1 ===
+
+[1] Word 文档
+
+[2] drawio 图
+
+[3] SQL 脚本实跑
+
+[4] Maven 骨架
+
+  [PASS] docx 00-能力自检与编排方案.docx — 段落80 标题31 表格22 页码域有 生成注记有
+  [PASS] docx 01-需求规格说明书.docx — 段落238 标题85 表格63 页码域有 生成注记有
+  [PASS] docx 02-模块化设计与接口规范.docx — 段落332 标题79 表格45 页码域有 生成注记有
+  [PASS] docx 05-数据库设计说明书.docx — 段落929 标题74 表格38 页码域有 生成注记有
+  [PASS] docx 06-小组分工与两周迭代计划.docx — 段落114 标题35 表格18 页码域有 生成注记有
+  [PASS] drawio 03-UML类图.drawio — 大小175KB 分页2 mxCell412 顶点312 边96
+  [PASS] drawio 04-UML时序图.drawio — 大小105KB 分页6 mxCell274 顶点151 边111
+  [PASS] drawio 05-ER图.drawio — 大小67KB 分页1 mxCell162 顶点142 边18
+  [PASS] schema.sql 实跑 — 表11张 缺无 索引13个 integrity=ok fk_violation=0
+  [PASS] seed-data.sql 导入 — 行数: category=10 credit_log=5 favorite=6 item=12 item_image=7 operation_log=7 review=3 system_config=11 trade_flow=4 trade_message=6 user=5
+  [PASS] code 结构 — pom.xml有 java文件119个 包12个
+  [PASS]   包 entity — 存在
+  [PASS]   包 dao — 存在
+  [PASS]   包 service — 存在
+  [PASS]   包 util — 存在
+  [PASS]   包 exception — 存在
+  [PASS]   包 config — 存在
+  [PASS]   包 dto — 存在
+  [PASS]   包 ui — 存在
+  [PASS]   包 controller — 存在
+
+合计 20 项：PASS 20 / FAIL 0

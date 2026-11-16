@@ -122,10 +122,10 @@ public class TradeFlowDaoImpl extends AbstractJdbcDao<TradeFlow> implements Trad
             params.add(status);
         }
         sql.append(" ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?");
-        int size = pageSize <= 0 ? 10 : pageSize;
+        int size = pageSize <= 0 ? 10 : Math.min(pageSize, 100);
         int page = pageNo <= 0 ? 1 : pageNo;
         params.add(size);
-        params.add((page - 1) * size);
+        params.add((long) (page - 1) * size);
         return queryList(sql.toString(), ROW_MAPPER, params.toArray());
     }
 

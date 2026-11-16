@@ -1,0 +1,20 @@
+11月 16, 2026 2:56:22 下午 edu.campus.recycle.util.DbUtil init
+信息: DbUtil 初始化完成，JDBC URL = jdbc:sqlite:C:\Users\wanhe\AppData\Local\Temp\campus-advice-b39a9e3545b54e33808653daabf968ca\member-advice.db
+11月 16, 2026 2:56:22 下午 edu.campus.recycle.util.ConfigManager loadFromResource
+信息: 已加载配置 application.properties，共 8 项
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.sqlite.SQLiteJDBCLoader in an unnamed module (file:/C:/Users/wanhe/Desktop/%e8%bd%af%e4%bb%b6%e6%9e%84%e9%80%a0/%e8%bf%ad%e4%bb%a3%e4%b8%80-%e6%88%90%e5%91%981/code/green-campus/lib/sqlite-jdbc-3.42.0.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+11月 16, 2026 2:56:23 下午 edu.campus.recycle.service.impl.UserServiceImpl register
+信息: 注册成功：userId=6，username=probe_admin
+FINDING M2-01 publicRegistrationRole=ADMIN
+FINDING M2-02 defaultSearchNonPublicStates=[DRAFT, LOCKED, PENDING, REJECTED, SOLD]
+11月 16, 2026 2:56:23 下午 edu.campus.recycle.service.impl.ItemServiceImpl publish
+信息: 物品发布成功：itemId=13，图片 0 张
+FINDING M2-03 frozenUserPublishedItem=13
+11月 16, 2026 2:56:23 下午 edu.campus.recycle.service.impl.ItemServiceImpl publish
+信息: 物品发布成功：itemId=14，图片 1 张
+FINDING M2-04 persistedImagePath=C:/missing/probe.png
+FINDING M2-05 pageSize=1, actualRecords=10

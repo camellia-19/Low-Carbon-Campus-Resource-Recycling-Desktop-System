@@ -81,7 +81,7 @@ public final class ConfigManager {
      * @return 配置值
      */
     public String getProperty(String key, String defaultValue) {
-        return properties.getProperty(key, defaultValue);
+        return System.getProperty(key, properties.getProperty(key, defaultValue));
     }
 
     /**
@@ -92,7 +92,7 @@ public final class ConfigManager {
      * @return 配置值
      */
     public int getInt(String key, int defaultValue) {
-        String value = properties.getProperty(key);
+        String value = getProperty(key, null);
         if (value == null) {
             return defaultValue;
         }
@@ -112,7 +112,7 @@ public final class ConfigManager {
      * @return 配置值
      */
     public double getDouble(String key, double defaultValue) {
-        String value = properties.getProperty(key);
+        String value = getProperty(key, null);
         if (value == null) {
             return defaultValue;
         }
@@ -132,7 +132,7 @@ public final class ConfigManager {
      * @return 配置值
      */
     public boolean getBoolean(String key, boolean defaultValue) {
-        String value = properties.getProperty(key);
+        String value = getProperty(key, null);
         return value == null ? defaultValue : Boolean.parseBoolean(value.trim());
     }
 }

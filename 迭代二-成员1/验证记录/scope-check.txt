@@ -1,0 +1,7 @@
+日期：2026-11-16
+分支：review/iteration2-member1
+检查基线：b6652a6（成员3原始提交）
+其他成员ui/service/controller/pom/run-ui/迭代一-成员3：无本轮差异
+上传目标：origin/review/iteration2-member1；远端main及feature/ui不修改
+JUnit：64/64，失败0、错误0、跳过0
+本轮未修改原Word、UML和SQL字段；原设计与实现差异在02交接文档校正

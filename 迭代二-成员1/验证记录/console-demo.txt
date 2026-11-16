@@ -1,0 +1,52 @@
+Picked up JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8
+============================================================
+ 绿色校园闲置物品循环流转平台 · 迭代一（成员1 数据层 D7 骨架）
+ 技术栈：Java 17 + SQLite(JDBC) + 手写 DAO + 工厂/策略/观察者/模板方法
+============================================================
+11月 16, 2026 3:25:15 下午 edu.campus.recycle.util.ConfigManager loadFromResource
+信息: 已加载配置 application.properties，共 8 项
+11月 16, 2026 3:25:15 下午 edu.campus.recycle.util.DbUtil init
+信息: DbUtil 初始化完成，JDBC URL = jdbc:sqlite:data/demo.db
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.sqlite.SQLiteJDBCLoader in an unnamed module (file:/C:/Users/wanhe/Desktop/%e8%bd%af%e4%bb%b6%e6%9e%84%e9%80%a0/%e8%bf%ad%e4%bb%a3%e4%b8%80-%e6%88%90%e5%91%981/code/green-campus/lib/sqlite-jdbc-3.42.0.0.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+[1/9] 数据库初始化完成：jdbc:sqlite:data/demo.db
+      system_config 项数：11
+      可用分类数：10，示例：教材书籍
+11月 16, 2026 3:25:15 下午 edu.campus.recycle.service.impl.UserServiceImpl register
+信息: 注册成功：userId=6，username=demo_stu
+[2/9] 注册成功：userId=6，初始信用分=100
+[3/9] 登录成功：demo_stu，角色=STUDENT，信用分=100
+11月 16, 2026 3:25:15 下午 edu.campus.recycle.service.impl.ItemServiceImpl publish
+信息: 物品发布成功：itemId=13，图片 1 张
+[4/9] 发布物品成功：itemId=13，状态=PENDING（默认待审核），上架时间=null
+[5/9] 审核通过：itemId=13，当前状态=ON_SALE，上架时间=2026-11-16T15:25:15
+[6/9] 检索「数据库」命中 1 条，当前页 1 条：
+      - #13 数据库系统概念（第 7 版） / SELL / 45.0
+      信用优先排序（CREDIT_FIRST）前 3 条：
+      * #2 考研英语一历年真题（2015-2025）
+      * #1 《数据结构（C 语言版）》第 2 版
+      * #11 小米移动电源 10000mAh
+11月 16, 2026 3:25:15 下午 edu.campus.recycle.service.impl.TradeServiceImpl apply
+信息: 流转申请成功：flowId=5，itemId=13
+[7/9] 申请成功：flowId=5，金额=45.0；已同意流转：flowId=5，物品状态=LOCKED
+11月 16, 2026 3:25:15 下午 edu.campus.recycle.service.impl.TradeServiceImpl lambda$confirm$0
+信息: 确认成交成功：flowId=5，itemId=13
+[8/9] 确认成交成功：flowId=5：物品状态=SOLD，卖家信用分 100 -> 102
+11月 16, 2026 3:25:15 下午 edu.campus.recycle.service.impl.ReviewServiceImpl$LoggerGuard info
+信息: 评价成功：flowId=5，reviewerId=3，score=5
+      评价成功：reviewId=4，评分=5
+      收藏切换结果=true；卖家信用等级=良好（变更次数 2）；买家未读消息=2；demo_stu 流转详情条数=1
+      最近操作日志条数：10
+[9/9] 完成流转统计（按一级分类）：
+      - 教材书籍：完成 2 笔，金额 70.00 元，减排 1.60 kgCO2e
+      - 文体用品：完成 1 笔，金额 0.00 元，减排 1.20 kgCO2e
+      - 数码配件：完成 0 笔，金额 0.00 元，减排 0.00 kgCO2e
+      - 生活物资：完成 0 笔，金额 0.00 元，减排 0.00 kgCO2e
+      碳减排总量：2.8 kgCO2e
+      统计 CSV 已导出：C:\Users\wanhe\Desktop\软件构造\迭代一-成员1\code\green-campus\data\export\statistics.csv
+============================================================
+ 演示流程全部通过（注册/登录/发布/审核/检索/流转/成交事务/评价/收藏/统计）
+============================================================

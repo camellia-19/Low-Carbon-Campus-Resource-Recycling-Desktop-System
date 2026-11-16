@@ -3,6 +3,7 @@ package edu.campus.recycle.dao.impl;
 import edu.campus.recycle.dao.ItemImageDao;
 import edu.campus.recycle.entity.ItemImage;
 import edu.campus.recycle.util.RowMapper;
+import edu.campus.recycle.util.DbUtil;
 
 import java.sql.PreparedStatement;
 import java.time.LocalDateTime;
@@ -77,7 +78,7 @@ public class ItemImageDaoImpl extends AbstractJdbcDao<ItemImage> implements Item
         if (images == null || images.isEmpty()) {
             return 0;
         }
-        return withConnection(conn -> {
+        return DbUtil.getInstance().executeInTransaction(tx -> withConnection(conn -> {
             int affected = 0;
             try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
                 int index = 0;
@@ -97,7 +98,7 @@ public class ItemImageDaoImpl extends AbstractJdbcDao<ItemImage> implements Item
                 }
             }
             return affected;
-        });
+        }));
     }
 
     @Override

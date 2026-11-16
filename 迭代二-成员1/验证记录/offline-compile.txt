@@ -1,0 +1,2 @@
+Picked up JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8
+PASS: javac --release 17 Main + MainApp with SQLite JDBC 3.42.0.0

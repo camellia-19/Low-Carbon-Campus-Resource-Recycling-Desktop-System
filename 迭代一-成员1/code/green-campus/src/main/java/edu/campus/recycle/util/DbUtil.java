@@ -26,9 +26,9 @@ import java.util.logging.Logger;
  * </ol>
  *
  * <p>SQLite 并发说明：默认隔离级别 SERIALIZABLE，写事务串行化；本类在
- * {@code setAutoCommit(false)} 后由驱动发起事务，写冲突由
- * {@code SQLITE_BUSY} 表现，上层捕获后转换为 {@link TransactionException}，
- * 迭代二可通过 {@code busy_timeout} 与重试策略增强。</p>
+ * {@code setAutoCommit(false)} 后由驱动发起事务；每个连接配置 5 秒 busy_timeout。
+ * DAO 的 SQL 错误转换为 DataAccessException，事务模板自身的检查异常转换为
+ * TransactionException。嵌套失败及 DAO SQL 失败将标记整个事务必须回滚。</p>
  */
 public final class DbUtil {
 
@@ -39,9 +39,10 @@ public final class DbUtil {
 
     /** 事务连接上下文：仅事务线程可见 */
     private static final ThreadLocal<Connection> TX_CONNECTION = new ThreadLocal<>();
+    private static final ThreadLocal<Boolean> ROLLBACK_ONLY = new ThreadLocal<>();
 
     /** JDBC URL，默认使用工程 data 目录下的 SQLite 文件 */
-    private String jdbcUrl = "jdbc:sqlite:data/greencampus.db";
+    private volatile String jdbcUrl = "jdbc:sqlite:data/greencampus.db";
 
     private DbUtil() {
         // 单例：禁止外部实例化
@@ -62,6 +63,9 @@ public final class DbUtil {
      * @param url SQLite 连接串，如 {@code jdbc:sqlite:data/greencampus.db}
      */
     public void init(String url) {
+        if (isInTransaction()) {
+            throw new IllegalStateException("事务中不能切换数据库");
+        }
         if (url != null && !url.isBlank()) {
             this.jdbcUrl = url;
         }
@@ -90,6 +94,9 @@ public final class DbUtil {
         try (var stmt = conn.createStatement()) {
             stmt.execute("PRAGMA foreign_keys = ON");
             stmt.execute("PRAGMA busy_timeout = 5000");
+        } catch (SQLException e) {
+            try { conn.close(); } catch (SQLException closeError) { e.addSuppressed(closeError); }
+            throw e;
         }
         return conn;
     }
@@ -119,7 +126,7 @@ public final class DbUtil {
      * 模板方法：在单个事务中执行回调（BR-07 的落点）。
      *
      * <p>若当前线程已处于事务中，则直接复用外层事务（嵌套调用不会二次提交），
-     * 保证 Service 组合调用的事务原子性。</p>
+     * 保证 Service 组合调用的事务原子性。内层失败被捕获也不能继续提交外层事务。</p>
      *
      * @param callback 事务体
      * @param <T>      返回类型
@@ -131,26 +138,30 @@ public final class DbUtil {
         if (outer != null) {
             try {
                 return callback.doInTransaction(outer);
-            } catch (RuntimeException e) {
+            } catch (RuntimeException | Error e) {
+                markRollbackOnly();
                 throw e;
             } catch (Exception e) {
+                markRollbackOnly();
                 throw TransactionException.of("事务嵌套执行失败：" + e.getMessage(), e);
             }
         }
 
         Connection conn = null;
-        boolean originalAutoCommit = true;
         try {
             conn = getConnection();
-            originalAutoCommit = conn.getAutoCommit();
             conn.setAutoCommit(false);
             TX_CONNECTION.set(conn);
+            ROLLBACK_ONLY.set(false);
             LOG.log(Level.FINE, "事务开始");
             T result = callback.doInTransaction(conn);
+            if (Boolean.TRUE.equals(ROLLBACK_ONLY.get())) {
+                throw TransactionException.of("事务内操作失败，事务已标记为必须回滚", null);
+            }
             conn.commit();
             LOG.log(Level.FINE, "事务提交");
             return result;
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | Error e) {
             rollbackQuietly(conn);
             throw e;
         } catch (Exception e) {
@@ -159,14 +170,17 @@ public final class DbUtil {
             throw TransactionException.of("事务执行失败，已整体回滚：" + e.getMessage(), e);
         } finally {
             TX_CONNECTION.remove();
+            ROLLBACK_ONLY.remove();
             if (conn != null) {
-                try {
-                    conn.setAutoCommit(originalAutoCommit);
-                } catch (SQLException e) {
-                    LOG.log(Level.WARNING, "恢复自动提交失败", e);
-                }
                 closeQuietly(conn);
             }
+        }
+    }
+
+    /** SQL 或嵌套事务失败后，即使调用方捕获异常，外层也必须回滚。 */
+    public void markRollbackOnly() {
+        if (isInTransaction()) {
+            ROLLBACK_ONLY.set(true);
         }
     }
 

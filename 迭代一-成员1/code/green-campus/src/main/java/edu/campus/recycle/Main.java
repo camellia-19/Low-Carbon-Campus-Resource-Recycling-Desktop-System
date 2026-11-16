@@ -25,6 +25,7 @@ import edu.campus.recycle.service.ItemService;
 import edu.campus.recycle.service.StatisticService;
 import edu.campus.recycle.service.UserService;
 import edu.campus.recycle.util.DaoFactory;
+import edu.campus.recycle.util.DbUtil;
 import edu.campus.recycle.util.ServiceFactory;
 
 import java.math.BigDecimal;
@@ -41,7 +42,7 @@ import java.util.logging.Logger;
  * {@code ItemService.audit(pass=true)} 审核通过（写入 {@code published_at}）后才能被检索与申请；
  * 演示因此插入"管理员审核"步骤，并改用 {@code controller} 包薄壳调用业务（界面层视角）。</p>
  *
- * <p>本演示在独立数据库文件 {@code data/greencampus.db} 上重建 schema 并导入
+ * <p>本演示在独立数据库文件 {@code data/demo.db} 上重建 schema 并导入
  * {@code db/seed-data.sql} 演示数据，不触碰任何验证库。</p>
  */
 public final class Main {
@@ -87,9 +88,10 @@ public final class Main {
 
         // 1. 初始化数据库（执行 schema + seed）
         DbConfig config = DbConfig.getInstance();
-        config.applyToDbUtil();
-        DatabaseInitializer.initialize();
-        System.out.println("[1/9] 数据库初始化完成：" + config.getJdbcUrl());
+        // 控制台演示只重建独立 demo.db，绝不覆盖 GUI 的 greencampus.db。
+        DbUtil.getInstance().init("jdbc:sqlite:data/demo.db");
+        DatabaseInitializer.reset(true);
+        System.out.println("[1/9] 数据库初始化完成：" + DbUtil.getInstance().getJdbcUrl());
         System.out.println("      system_config 项数：" + config.loadSystemConfigMap().size());
         List<Category> categories = DaoFactory.getInstance().getCategoryDao().findEnabled();
         System.out.println("      可用分类数：" + categories.size()

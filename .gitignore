@@ -26,6 +26,11 @@ __pycache__/
 Thumbs.db
 desktop.ini
 .DS_Store
+~$*.docx
+*.log
+*.db-wal
+*.db-shm
+迭代一-成员1/code/green-campus/data/demo.db
 
 # ---------- 本地临时备份 ----------
 *.bak
