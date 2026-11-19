@@ -73,6 +73,9 @@ public interface ItemDao extends BaseDao<Item, Integer> {
      */
     int increaseFavoriteCount(int itemId, int delta);
 
+    /** 以当前事务中的收藏记录重新计算物品收藏数。 */
+    int refreshFavoriteCount(int itemId);
+
     /**
      * 查询某用户发布的物品。
      *

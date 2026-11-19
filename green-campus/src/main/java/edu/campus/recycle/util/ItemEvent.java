@@ -18,6 +18,8 @@ public final class ItemEvent {
     public enum Type {
         /** 发布物品 */
         ITEM_PUBLISHED,
+        /** 修改物品 */
+        ITEM_UPDATED,
         /** 下架物品 */
         ITEM_OFF_SHELF,
         /** 审核物品 */

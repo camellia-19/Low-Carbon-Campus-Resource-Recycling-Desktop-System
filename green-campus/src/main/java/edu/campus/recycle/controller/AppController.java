@@ -1,6 +1,7 @@
 package edu.campus.recycle.controller;
 
 import edu.campus.recycle.config.DatabaseInitializer;
+import edu.campus.recycle.config.DbConfig;
 import edu.campus.recycle.dto.ItemQuery;
 import edu.campus.recycle.dto.LoginResult;
 import edu.campus.recycle.dto.PageResult;
@@ -50,6 +51,7 @@ public class AppController {
      * 初始化数据库（界面启动时调用一次）。
      */
     public void bootstrapDatabase() {
+        DbConfig.getInstance().applyToDbUtil();
         DatabaseInitializer.initialize();
     }
 
@@ -59,6 +61,7 @@ public class AppController {
      * @return 登录结果
      */
     public LoginResult login(String username, String rawPassword) {
+        this.currentUser = null;
         LoginResult result = userService.login(username, rawPassword);
         this.currentUser = userService.findById(result.getUserId());
         return result;
@@ -76,6 +79,12 @@ public class AppController {
     }
 
     public Item publishItem(Item item, List<String> imagePaths) {
+        if (currentUser == null) {
+            throw new IllegalStateException("请先登录");
+        }
+        if (item != null) {
+            item.setOwnerId(currentUser.getId());
+        }
         return itemService.publish(item, imagePaths);
     }
 

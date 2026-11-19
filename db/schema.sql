@@ -23,11 +23,8 @@
 --   * 枚举字段：TEXT 存 Java 枚举 name()，CHECK 限定取值集合
 --   * 表名 user / category / item 等若与 SQL 关键字冲突，统一使用双引号包裹
 --
--- 可重复执行策略（二选一，本脚本采用"反序 DROP + 正序 CREATE"）：
---   本脚本显式按外键依赖的反序执行 DROP TABLE IF EXISTS，然后按依赖正序建表，
---   因此每次执行都会得到一个"结构全新、数据清空"的干净库；适用于本迭代的
---   初始化与回归验证。生产环境如需保留数据，应改用 CREATE TABLE IF NOT EXISTS
---   或版本化迁移脚本（本项目在 D5 第 8 节说明该取舍）。
+-- 建表和建索引使用 IF NOT EXISTS，重复执行保留已有数据。
+-- 本脚本不会更新现有表的结构，后续版本变更需要独立迁移。
 --   建表顺序（外键依赖正序）：
 --     user -> category -> item -> item_image -> favorite -> trade_message
 --          -> trade_flow -> review -> credit_log -> operation_log -> system_config
@@ -42,30 +39,10 @@ PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 
 -- -----------------------------------------------------------------------------
--- 0. 反序清理（保证脚本可重复执行；顺序与建表顺序严格相反）
---    category.parent_id 为自引用外键（ON DELETE RESTRICT），库中已有分类数据时直接
---    DROP TABLE 会因父行被隐式删除而触发外键约束（SQLITE_CONSTRAINT_TRIGGER）。
---    故重建阶段临时关闭外键强制，全部建表完成后于文末恢复（见第 12 节）。
--- -----------------------------------------------------------------------------
-PRAGMA foreign_keys = OFF;
-
-DROP TABLE IF EXISTS system_config;
-DROP TABLE IF EXISTS operation_log;
-DROP TABLE IF EXISTS credit_log;
-DROP TABLE IF EXISTS review;
-DROP TABLE IF EXISTS trade_flow;
-DROP TABLE IF EXISTS trade_message;
-DROP TABLE IF EXISTS favorite;
-DROP TABLE IF EXISTS item_image;
-DROP TABLE IF EXISTS item;
-DROP TABLE IF EXISTS category;
-DROP TABLE IF EXISTS "user";
-
--- -----------------------------------------------------------------------------
 -- 1. user 用户表
 --    职责：账号、认证、角色、信用分、登录失败锁定状态
 -- -----------------------------------------------------------------------------
-CREATE TABLE "user" (
+CREATE TABLE IF NOT EXISTS "user" (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,                          -- 用户ID
     username      TEXT    NOT NULL UNIQUE,                                    -- 登录名，4-20 位字母数字下划线（BR-01）
     password_hash TEXT    NOT NULL,                                           -- PBKDF2WithHmacSHA256 Base64 摘要（BR-02）
@@ -90,7 +67,7 @@ CREATE TABLE "user" (
 -- -----------------------------------------------------------------------------
 -- 2. category 分类表（两级：parent_id IS NULL 为一级分类）
 -- -----------------------------------------------------------------------------
-CREATE TABLE category (
+CREATE TABLE IF NOT EXISTS category (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,                             -- 分类ID
     name       TEXT    NOT NULL,                                              -- 分类名
     parent_id  INTEGER,                                                       -- 父分类，NULL=一级分类
@@ -104,12 +81,12 @@ CREATE TABLE category (
 );
 -- 说明：SQLite 的 UNIQUE 约束将 NULL 视为互不相等，因此 UNIQUE(parent_id, name)
 --       无法阻止"多个同名一级分类"。此处补充部分唯一索引堵住该漏洞（NULL 分组）。
-CREATE UNIQUE INDEX uq_category_root_name ON category(name) WHERE parent_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_category_root_name ON category(name) WHERE parent_id IS NULL;
 
 -- -----------------------------------------------------------------------------
 -- 3. item 闲置物品表
 -- -----------------------------------------------------------------------------
-CREATE TABLE item (
+CREATE TABLE IF NOT EXISTS item (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,                        -- 物品ID
     owner_id        INTEGER NOT NULL,                                         -- 发布者 user.id
     category_id     INTEGER NOT NULL,                                         -- 分类 category.id
@@ -141,14 +118,14 @@ CREATE TABLE item (
         REFERENCES category(id) ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
-CREATE INDEX idx_item_status_category ON item(status, category_id);           -- 检索主路径
-CREATE INDEX idx_item_owner           ON item(owner_id);                      -- "我的发布"
-CREATE INDEX idx_item_title           ON item(title);                         -- 关键词前缀/排序辅助
+CREATE INDEX IF NOT EXISTS idx_item_status_category ON item(status, category_id);           -- 检索主路径
+CREATE INDEX IF NOT EXISTS idx_item_owner           ON item(owner_id);                      -- "我的发布"
+CREATE INDEX IF NOT EXISTS idx_item_title           ON item(title);                         -- 关键词前缀/排序辅助
 
 -- -----------------------------------------------------------------------------
 -- 4. item_image 物品图片表（只存相对路径，二进制不入库，BR-12）
 -- -----------------------------------------------------------------------------
-CREATE TABLE item_image (
+CREATE TABLE IF NOT EXISTS item_image (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,                             -- 图片ID
     item_id    INTEGER NOT NULL,                                              -- 所属物品
     file_path  TEXT    NOT NULL,                                              -- 相对路径 data/images/{itemId}/{uuid}.jpg
@@ -158,12 +135,12 @@ CREATE TABLE item_image (
         REFERENCES item(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
-CREATE INDEX idx_item_image_item ON item_image(item_id, sort_order);         -- 按物品取有序图片
+CREATE INDEX IF NOT EXISTS idx_item_image_item ON item_image(item_id, sort_order);         -- 按物品取有序图片
 
 -- -----------------------------------------------------------------------------
 -- 5. favorite 收藏表
 -- -----------------------------------------------------------------------------
-CREATE TABLE favorite (
+CREATE TABLE IF NOT EXISTS favorite (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,                             -- 收藏ID
     user_id    INTEGER NOT NULL,                                              -- 收藏人
     item_id    INTEGER NOT NULL,                                              -- 被收藏物品
@@ -175,12 +152,12 @@ CREATE TABLE favorite (
         REFERENCES item(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
-CREATE INDEX idx_favorite_user ON favorite(user_id);                         -- "我的收藏"列表
+CREATE INDEX IF NOT EXISTS idx_favorite_user ON favorite(user_id);                         -- "我的收藏"列表
 
 -- -----------------------------------------------------------------------------
 -- 6. trade_message 流转沟通消息表
 -- -----------------------------------------------------------------------------
-CREATE TABLE trade_message (
+CREATE TABLE IF NOT EXISTS trade_message (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,                           -- 消息ID
     item_id      INTEGER NOT NULL,                                            -- 关联物品
     from_user_id INTEGER NOT NULL,                                            -- 发送者
@@ -197,13 +174,13 @@ CREATE TABLE trade_message (
         REFERENCES "user"(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
-CREATE INDEX idx_msg_pair ON trade_message(from_user_id, to_user_id, item_id); -- 会话查询
+CREATE INDEX IF NOT EXISTS idx_msg_pair ON trade_message(from_user_id, to_user_id, item_id); -- 会话查询
 
 -- -----------------------------------------------------------------------------
 -- 7. trade_flow 流转记录表（核心表）
 --    业务约束 BR-05：同一物品同时最多一条进行中流转（部分唯一索引兜底）
 -- -----------------------------------------------------------------------------
-CREATE TABLE trade_flow (
+CREATE TABLE IF NOT EXISTS trade_flow (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,                          -- 流转ID
     item_id       INTEGER NOT NULL,                                           -- 物品
     seller_id     INTEGER NOT NULL,                                           -- 出让方
@@ -228,16 +205,16 @@ CREATE TABLE trade_flow (
 
 -- 部分唯一索引：仅对"进行中"的流转生效，保证同一物品最多一条 APPLYING/AGREED；
 -- 已 DONE/CANCELLED 的历史记录不受限制，可保留多次流转历史。SQLite 3.8.0+ 支持。
-CREATE UNIQUE INDEX uq_flow_item_active ON trade_flow(item_id)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_flow_item_active ON trade_flow(item_id)
     WHERE status IN ('APPLYING','AGREED');
 
-CREATE INDEX idx_flow_seller ON trade_flow(seller_id);                       -- "我卖出的"
-CREATE INDEX idx_flow_buyer  ON trade_flow(buyer_id);                        -- "我买到的"
+CREATE INDEX IF NOT EXISTS idx_flow_seller ON trade_flow(seller_id);                       -- "我卖出的"
+CREATE INDEX IF NOT EXISTS idx_flow_buyer  ON trade_flow(buyer_id);                        -- "我买到的"
 
 -- -----------------------------------------------------------------------------
 -- 8. review 评价表（BR-08：同一流转同一人只能评一次）
 -- -----------------------------------------------------------------------------
-CREATE TABLE review (
+CREATE TABLE IF NOT EXISTS review (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,                            -- 评价ID
     flow_id     INTEGER NOT NULL,                                             -- 关联流转
     reviewer_id INTEGER NOT NULL,                                             -- 评价人
@@ -254,12 +231,12 @@ CREATE TABLE review (
         REFERENCES "user"(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
-CREATE INDEX idx_review_reviewee ON review(reviewee_id);                     -- 信誉页/平均分
+CREATE INDEX IF NOT EXISTS idx_review_reviewee ON review(reviewee_id);                     -- 信誉页/平均分
 
 -- -----------------------------------------------------------------------------
 -- 9. credit_log 信用分变更流水表（BR-04：每次变更留快照）
 -- -----------------------------------------------------------------------------
-CREATE TABLE credit_log (
+CREATE TABLE IF NOT EXISTS credit_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,                            -- 流水ID
     user_id     INTEGER NOT NULL,                                             -- 用户
     flow_id     INTEGER,                                                      -- 关联流转，可为 NULL
@@ -273,12 +250,12 @@ CREATE TABLE credit_log (
         REFERENCES trade_flow(id) ON DELETE SET NULL ON UPDATE CASCADE
 );
 
-CREATE INDEX idx_credit_user ON credit_log(user_id, created_at);             -- 信用分历史
+CREATE INDEX IF NOT EXISTS idx_credit_user ON credit_log(user_id, created_at);             -- 信用分历史
 
 -- -----------------------------------------------------------------------------
 -- 10. operation_log 关键操作日志表（BR-11：仅追加，不修改）
 -- -----------------------------------------------------------------------------
-CREATE TABLE operation_log (
+CREATE TABLE IF NOT EXISTS operation_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,                            -- 日志ID
     operator_id INTEGER,                                                      -- 操作人，NULL=系统
     operation   TEXT    NOT NULL,                                             -- 操作类型 LOGIN/PUBLISH_ITEM/CONFIRM_FLOW/OFF_SHELF...
@@ -291,12 +268,12 @@ CREATE TABLE operation_log (
         REFERENCES "user"(id) ON DELETE SET NULL ON UPDATE CASCADE
 );
 
-CREATE INDEX idx_oplog_operator ON operation_log(operator_id, created_at);   -- 审计查询
+CREATE INDEX IF NOT EXISTS idx_oplog_operator ON operation_log(operator_id, created_at);   -- 审计查询
 
 -- -----------------------------------------------------------------------------
 -- 11. system_config 系统配置表（预置键见 seed-data.sql；键唯一）
 -- -----------------------------------------------------------------------------
-CREATE TABLE system_config (
+CREATE TABLE IF NOT EXISTS system_config (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,                           -- 配置ID
     config_key   TEXT    NOT NULL UNIQUE,                                     -- 键
     config_value TEXT    NOT NULL,                                            -- 值
@@ -305,6 +282,6 @@ CREATE TABLE system_config (
 );
 
 -- -----------------------------------------------------------------------------
--- 12. 恢复外键强制（第 0 节为支持可重复执行而临时关闭）
+-- 12. 确保脚本执行连接启用外键校验
 -- -----------------------------------------------------------------------------
 PRAGMA foreign_keys = ON;

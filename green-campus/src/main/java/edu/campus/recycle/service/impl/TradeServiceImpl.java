@@ -19,6 +19,7 @@ import edu.campus.recycle.entity.UserStatus;
 import edu.campus.recycle.exception.BusinessRuleException;
 import edu.campus.recycle.exception.EntityNotFoundException;
 import edu.campus.recycle.exception.PermissionDeniedException;
+import edu.campus.recycle.exception.ValidationException;
 import edu.campus.recycle.service.TradeService;
 import edu.campus.recycle.util.DbUtil;
 import edu.campus.recycle.util.ItemEvent;
@@ -62,19 +63,22 @@ public class TradeServiceImpl implements TradeService {
     @Override
     public TradeFlow apply(int itemId, int buyerId, String remark)
             throws BusinessRuleException, EntityNotFoundException {
-        Item item = itemDao.findById(itemId)
-                .orElseThrow(() -> EntityNotFoundException.of("物品不存在：id=" + itemId));
+        return DbUtil.getInstance().executeInTransaction(conn -> createApplication(itemId, buyerId, remark));
+    }
+
+    private TradeFlow createApplication(int itemId, int buyerId, String remark) {
+        Item item = findItem(itemId);
         if (Objects.equals(item.getOwnerId(), buyerId)) {
             throw BusinessRuleException.of("BR-06", "不能申请自己发布的物品");
+        }
+        if (ItemStatus.SOLD.getCode().equals(item.getStatus())) {
+            throw BusinessRuleException.of("BR-05", "物品已成交");
         }
         if (!ItemStatus.ON_SALE.getCode().equals(item.getStatus())) {
             throw BusinessRuleException.of("BR-06", "仅「在售」物品可发起流转申请，当前：" + item.getStatus());
         }
-        User buyer = userDao.findById(buyerId)
-                .orElseThrow(() -> EntityNotFoundException.of("申请用户不存在：id=" + buyerId));
-        if (!UserStatus.ACTIVE.getCode().equals(buyer.getStatus())) {
-            throw BusinessRuleException.of("BR-06", "账号状态异常，无法发起流转");
-        }
+        requireActiveParticipant(buyerId);
+        requireActiveParticipant(item.getOwnerId());
         if (tradeFlowDao.findActiveByItemId(itemId).isPresent()) {
             throw BusinessRuleException.of("BR-05", "该物品已有进行中的流转，不可重复申请");
         }
@@ -89,27 +93,26 @@ public class TradeServiceImpl implements TradeService {
         flow.setStatus(FlowStatus.APPLYING.getCode());
         flow.setApplyRemark(remark);
         flow.setCreatedAt(now);
-        DbUtil.getInstance().executeInTransaction(conn -> {
-            tradeFlowDao.insert(flow);
-            ItemEventBus.getInstance().publish(
-                    ItemEvent.of(ItemEvent.Type.FLOW_APPLIED, itemId, flow.getId(), buyerId, "发起流转申请"));
-            return null;
-        });
+        tradeFlowDao.insert(flow);
+        ItemEventBus.getInstance().publish(
+                ItemEvent.of(ItemEvent.Type.FLOW_APPLIED, itemId, flow.getId(), buyerId, "发起流转申请"));
         LOG.info(() -> "流转申请成功：flowId=" + flow.getId() + "，itemId=" + itemId);
         return flow;
     }
 
     @Override
     public void agree(int flowId, int operatorId) throws PermissionDeniedException, BusinessRuleException {
-        TradeFlow flow = tradeFlowDao.findById(flowId)
-                .orElseThrow(() -> EntityNotFoundException.of("流转记录不存在：id=" + flowId));
-        if (!Objects.equals(flow.getSellerId(), operatorId)) {
-            throw PermissionDeniedException.of("仅物品发布者可同意该流转申请");
-        }
-        if (!FlowStatus.APPLYING.getCode().equals(flow.getStatus())) {
-            throw BusinessRuleException.of("BR-06", "仅「申请中」的流转可同意，当前：" + flow.getStatus());
-        }
         DbUtil.getInstance().executeInTransaction(conn -> {
+            TradeFlow flow = findFlow(flowId);
+            if (!Objects.equals(flow.getSellerId(), operatorId)) {
+                throw PermissionDeniedException.ofCode("PERM-021", "仅物品发布者可同意该流转申请");
+            }
+            if (!FlowStatus.APPLYING.getCode().equals(flow.getStatus())
+                    || !ItemStatus.ON_SALE.getCode().equals(findItem(flow.getItemId()).getStatus())) {
+                throw BusinessRuleException.of("BR-06", "仅在售物品的申请中流转可同意");
+            }
+            requireActiveParticipant(flow.getSellerId());
+            requireActiveParticipant(flow.getBuyerId());
             tradeFlowDao.updateStatus(flowId, FlowStatus.AGREED.getCode(), null, null);
             itemDao.updateStatus(flow.getItemId(), ItemStatus.LOCKED.getCode(), null);
             ItemEventBus.getInstance().publish(
@@ -124,7 +127,7 @@ public class TradeServiceImpl implements TradeService {
             TradeFlow flow = tradeFlowDao.findById(flowId)
                     .orElseThrow(() -> EntityNotFoundException.of("流转记录不存在：id=" + flowId));
             if (!Objects.equals(flow.getSellerId(), operatorId) && !Objects.equals(flow.getBuyerId(), operatorId)) {
-                throw PermissionDeniedException.of("仅交易双方可确认成交");
+                throw PermissionDeniedException.ofCode("PERM-022", "仅交易双方可确认成交");
             }
             if (!FlowStatus.AGREED.getCode().equals(flow.getStatus())) {
                 throw BusinessRuleException.of("BR-06", "仅「已同意」的流转可确认成交，当前：" + flow.getStatus());
@@ -134,6 +137,11 @@ public class TradeServiceImpl implements TradeService {
             if (ItemStatus.SOLD.getCode().equals(item.getStatus())) {
                 throw BusinessRuleException.of("BR-05", "该物品已成交，不可重复成交");
             }
+            if (!ItemStatus.LOCKED.getCode().equals(item.getStatus())) {
+                throw BusinessRuleException.of("BR-06", "仅锁定物品可确认成交");
+            }
+            requireActiveParticipant(flow.getSellerId());
+            requireActiveParticipant(flow.getBuyerId());
             LocalDateTime now = LocalDateTime.now().withNano(0);
             itemDao.updateStatus(flow.getItemId(), ItemStatus.SOLD.getCode(), null);
             tradeFlowDao.updateStatus(flowId, FlowStatus.DONE.getCode(), null, now);
@@ -146,34 +154,53 @@ public class TradeServiceImpl implements TradeService {
 
     @Override
     public void cancel(int flowId, int operatorId, String reason) throws PermissionDeniedException {
-        TradeFlow flow = tradeFlowDao.findById(flowId)
-                .orElseThrow(() -> EntityNotFoundException.of("流转记录不存在：id=" + flowId));
-        boolean participant = Objects.equals(flow.getSellerId(), operatorId)
-                || Objects.equals(flow.getBuyerId(), operatorId);
-        boolean admin = userDao.findById(operatorId)
-                .map(u -> Role.ADMIN.getCode().equals(u.getRole()))
-                .orElse(false);
-        // 第 3 轮裁决 v1.1 §13-7：买卖双方或 ADMIN 均可取消（PERM-023 语义为"非当事人且非管理员"）
-        if (!participant && !admin) {
-            throw PermissionDeniedException.of("仅交易双方或管理员可取消该流转");
-        }
-        if (!FlowStatus.APPLYING.getCode().equals(flow.getStatus())
-                && !FlowStatus.AGREED.getCode().equals(flow.getStatus())) {
-            throw BusinessRuleException.of("BR-06", "仅进行中的流转可取消，当前：" + flow.getStatus());
-        }
-        if (reason == null || reason.trim().isEmpty()) {
-            throw BusinessRuleException.of("BR-06", "取消原因不能为空");
-        }
-        LocalDateTime now = LocalDateTime.now().withNano(0);
         DbUtil.getInstance().executeInTransaction(conn -> {
-            tradeFlowDao.updateStatus(flowId, FlowStatus.CANCELLED.getCode(), reason.trim(), now);
-            if (FlowStatus.AGREED.getCode().equals(flow.getStatus())) {
-                itemDao.updateStatus(flow.getItemId(), ItemStatus.ON_SALE.getCode(), null);
-            }
-            ItemEventBus.getInstance().publish(
-                    ItemEvent.flow(ItemEvent.Type.FLOW_CANCELLED, flow, operatorId, "取消流转：" + reason.trim()));
+            cancelActiveFlow(flowId, operatorId, reason);
             return null;
         });
+    }
+
+    private void cancelActiveFlow(int flowId, int operatorId, String reason) {
+        TradeFlow flow = findFlow(flowId);
+        User operator = userDao.findById(operatorId)
+                .orElseThrow(() -> PermissionDeniedException.ofCode("PERM-023", "无法取消该流转"));
+        boolean participant = Objects.equals(flow.getSellerId(), operatorId)
+                || Objects.equals(flow.getBuyerId(), operatorId);
+        if (!UserStatus.ACTIVE.getCode().equals(operator.getStatus())
+                || (!participant && !Role.ADMIN.getCode().equals(operator.getRole()))) {
+            throw PermissionDeniedException.ofCode("PERM-023", "仅正常状态的交易双方或管理员可取消该流转");
+        }
+        boolean wasAgreed = FlowStatus.AGREED.getCode().equals(flow.getStatus());
+        if (!FlowStatus.APPLYING.getCode().equals(flow.getStatus()) && !wasAgreed) {
+            throw BusinessRuleException.of("BR-06", "仅进行中的流转可取消，当前：" + flow.getStatus());
+        }
+        if (reason == null || reason.isBlank() || reason.strip().length() > 200) {
+            throw ValidationException.ofCode("VAL-006", "取消原因须为 1–200 字");
+        }
+        String cancelReason = reason.strip();
+        tradeFlowDao.updateStatus(flowId, FlowStatus.CANCELLED.getCode(), cancelReason, LocalDateTime.now().withNano(0));
+        Item item = findItem(flow.getItemId());
+        if (wasAgreed && ItemStatus.LOCKED.getCode().equals(item.getStatus())) {
+            itemDao.updateStatus(item.getId(), ItemStatus.ON_SALE.getCode(), item.getAuditRemark());
+        }
+        ItemEventBus.getInstance().publish(
+                ItemEvent.flow(ItemEvent.Type.FLOW_CANCELLED, flow, operatorId, "取消流转：" + cancelReason));
+    }
+
+    private Item findItem(int id) {
+        return itemDao.findById(id).orElseThrow(() -> EntityNotFoundException.ofCode("NF-022", "物品不存在"));
+    }
+
+    private TradeFlow findFlow(int id) {
+        return tradeFlowDao.findById(id)
+                .orElseThrow(() -> EntityNotFoundException.ofCode("NF-023", "流转记录不存在"));
+    }
+
+    private void requireActiveParticipant(int userId) {
+        User user = userDao.findById(userId).orElseThrow(() -> EntityNotFoundException.of("用户不存在"));
+        if (!UserStatus.ACTIVE.getCode().equals(user.getStatus())) {
+            throw BusinessRuleException.of("BR-06", "流转参与方账号当前不可用");
+        }
     }
 
     @Override

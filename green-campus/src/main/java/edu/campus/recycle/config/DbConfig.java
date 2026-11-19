@@ -28,7 +28,7 @@ public final class DbConfig {
         this.schemaPath = config.getProperty(ConfigManager.KEY_SCHEMA, "../db/schema.sql");
         this.seedPath = config.getProperty(ConfigManager.KEY_SEED, "../db/seed-data.sql");
         this.imageDir = config.getProperty(ConfigManager.KEY_IMAGE_DIR, "data/images");
-        this.seedOnStart = config.getBoolean(ConfigManager.KEY_SEED_ON_START, true);
+        this.seedOnStart = config.getBoolean(ConfigManager.KEY_SEED_ON_START, false);
     }
 
     /**

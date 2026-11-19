@@ -104,6 +104,13 @@ public class TradeFlowDaoImpl extends AbstractJdbcDao<TradeFlow> implements Trad
     }
 
     @Override
+    public List<TradeFlow> findActiveByUserId(int userId) {
+        return queryList("SELECT " + COLUMNS + " FROM " + TABLE
+                        + " WHERE (seller_id = ? OR buyer_id = ?) AND status IN ('APPLYING', 'AGREED') ORDER BY id",
+                ROW_MAPPER, userId, userId);
+    }
+
+    @Override
     public int updateStatus(int flowId, String status, String cancelReason, LocalDateTime finishedAt) {
         return executeUpdate("UPDATE " + TABLE + " SET status = ?, cancel_reason = ?, finished_at = ?"
                         + " WHERE id = ?", status, cancelReason,

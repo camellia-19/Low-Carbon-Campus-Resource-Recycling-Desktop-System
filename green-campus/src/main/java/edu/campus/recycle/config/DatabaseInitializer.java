@@ -12,25 +12,29 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * 数据库初始化器：执行 {@code schema.sql}（脚本自身可重复执行：先反序 DROP 再重建），
- * 并按开关执行 {@code seed-data.sql} 导入演示数据。
+ * 数据库初始化器：仅为空库建立结构，按需在同一事务中导入演示数据。
  *
  * <p>脚本按分号拆分逐条执行；拆分时识别单引号字符串与 {@code --} 行注释，避免误切。</p>
  */
 public final class DatabaseInitializer {
 
     private static final Logger LOG = Logger.getLogger(DatabaseInitializer.class.getName());
+    private static final Set<String> REQUIRED_TABLES = Set.of("user", "category", "item", "item_image",
+            "favorite", "trade_message", "trade_flow", "review", "credit_log", "operation_log", "system_config");
 
     private DatabaseInitializer() {
     }
 
     /**
-     * 初始化数据库（含种子数据，取决于配置 app.seed.on.start）。
+     * 启动时确保数据库可用。演示种子开关仅在首次建库时生效。
      */
     public static void initialize() {
         initialize(DbConfig.getInstance().isSeedOnStart());
@@ -39,17 +43,62 @@ public final class DatabaseInitializer {
     /**
      * 初始化数据库。
      *
-     * @param withSeed 是否导入种子数据
+     * @param withSeed 空库建表时是否导入演示种子数据
      */
     public static void initialize(boolean withSeed) {
         ensureDatabaseDirectory();
-        Path schema = Paths.get(DbConfig.getInstance().getSchemaPath()).toAbsolutePath().normalize();
-        runScript(schema, "建库脚本");
-        if (withSeed) {
-            Path seed = Paths.get(DbConfig.getInstance().getSeedPath()).toAbsolutePath().normalize();
-            runScript(seed, "种子数据脚本");
+        boolean created = DbUtil.getInstance().executeInTransaction(conn -> initializeIfEmpty(conn, withSeed));
+        if (created) {
+            enableWal();
+            LOG.info("新数据库已初始化");
+        } else {
+            LOG.info("已打开现有数据库");
         }
-        LOG.info(() -> "数据库初始化完成，schema=" + schema);
+    }
+
+    private static boolean initializeIfEmpty(Connection conn, boolean withSeed) throws SQLException {
+        Set<String> tables = readTables(conn);
+        if (!tables.isEmpty()) {
+            requireCompleteSchema(tables);
+            return false;
+        }
+        DbConfig config = DbConfig.getInstance();
+        runScript(conn, Paths.get(config.getSchemaPath()), "建库脚本", false);
+        requireCompleteSchema(readTables(conn));
+        if (withSeed) {
+            runScript(conn, Paths.get(config.getSeedPath()), "种子数据脚本", true);
+        }
+        return true;
+    }
+
+    private static Set<String> readTables(Connection conn) throws SQLException {
+        Set<String> tables = new HashSet<>();
+        try (var statement = conn.createStatement();
+             var result = statement.executeQuery("SELECT name FROM sqlite_master WHERE type = 'table'")) {
+            while (result.next()) {
+                String name = result.getString(1);
+                if (!name.startsWith("sqlite_")) {
+                    tables.add(name);
+                }
+            }
+        }
+        return tables;
+    }
+
+    private static void requireCompleteSchema(Set<String> tables) {
+        if (!tables.containsAll(REQUIRED_TABLES)) {
+            var missing = new java.util.TreeSet<>(REQUIRED_TABLES);
+            missing.removeAll(tables);
+            throw DataAccessException.of("数据库结构不完整，缺少表：" + String.join("、", missing));
+        }
+    }
+
+    private static void enableWal() {
+        try (var conn = DbUtil.getInstance().getConnection(); var statement = conn.createStatement()) {
+            statement.execute("PRAGMA journal_mode = WAL");
+        } catch (SQLException e) {
+            LOG.log(Level.WARNING, "无法启用 WAL，继续使用 SQLite 当前日志模式", e);
+        }
     }
 
     /**
@@ -62,7 +111,7 @@ public final class DatabaseInitializer {
             return;
         }
         String filePart = jdbcUrl.substring(prefix.length());
-        if (filePart.isEmpty() || filePart.startsWith(":memory:")) {
+        if (filePart.isEmpty() || filePart.startsWith(":memory:") || filePart.startsWith("file:")) {
             return;
         }
         Path parent = Paths.get(filePart).toAbsolutePath().normalize().getParent();
@@ -76,31 +125,28 @@ public final class DatabaseInitializer {
         }
     }
 
-    /**
-     * 执行一个 SQL 脚本文件。
-     *
-     * @param path  脚本路径
-     * @param label 日志标签
-     */
-    private static void runScript(Path path, String label) {
-        if (!Files.exists(path)) {
-            throw new IllegalStateException(label + "不存在：" + path);
-        }
+    /** 脚本的事务和连接设置由启动器接管。 */
+    private static void runScript(Connection conn, Path path, String label, boolean seed) throws SQLException {
         String content;
         try {
             content = Files.readString(path, StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw DataAccessException.of("读取" + label + "失败：" + path, e);
         }
-        List<String> statements = splitStatements(content);
-        LOG.info(() -> label + "共 " + statements.size() + " 条语句：" + path.getFileName());
-        try (Connection connection = DbUtil.getInstance().getConnection();
-             Statement statement = connection.createStatement()) {
-            for (String sql : statements) {
+        try (Statement statement = conn.createStatement()) {
+            for (String sql : splitStatements(content)) {
+                String command = sql.toUpperCase(Locale.ROOT).replaceAll("\\s+", " ");
+                if (command.startsWith("PRAGMA ") || (seed && (command.equals("BEGIN TRANSACTION") || command.equals("COMMIT")))) {
+                    continue;
+                }
+                boolean allowed = seed ? command.startsWith("INSERT INTO ")
+                        : command.startsWith("CREATE TABLE ") || command.startsWith("CREATE INDEX ")
+                        || command.startsWith("CREATE UNIQUE INDEX ");
+                if (!allowed) {
+                    throw DataAccessException.of(label + "包含不适用于首次初始化的语句");
+                }
                 statement.execute(sql);
             }
-        } catch (SQLException e) {
-            throw DataAccessException.of("执行" + label + "失败：" + path + "（" + e.getMessage() + "）", e);
         }
     }
 

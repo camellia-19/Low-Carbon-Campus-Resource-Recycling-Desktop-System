@@ -28,21 +28,19 @@ public class FavoriteServiceImpl implements FavoriteService {
 
     @Override
     public boolean toggle(int userId, int itemId) {
-        itemDao.findById(itemId)
-                .orElseThrow(() -> EntityNotFoundException.of("物品不存在：id=" + itemId));
         return DbUtil.getInstance().executeInTransaction(conn -> {
-            if (favoriteDao.exists(userId, itemId)) {
-                favoriteDao.delete(userId, itemId);
-                itemDao.increaseFavoriteCount(itemId, -1);
-                return Boolean.FALSE;
+            boolean added = favoriteDao.delete(userId, itemId) == 0;
+            if (added) {
+                itemDao.findById(itemId)
+                        .orElseThrow(() -> EntityNotFoundException.ofCode("NF-021", "物品不存在"));
+                Favorite favorite = new Favorite();
+                favorite.setUserId(userId);
+                favorite.setItemId(itemId);
+                favorite.setCreatedAt(LocalDateTime.now().withNano(0));
+                favoriteDao.insert(favorite);
             }
-            Favorite favorite = new Favorite();
-            favorite.setUserId(userId);
-            favorite.setItemId(itemId);
-            favorite.setCreatedAt(LocalDateTime.now().withNano(0));
-            favoriteDao.insert(favorite);
-            itemDao.increaseFavoriteCount(itemId, 1);
-            return Boolean.TRUE;
+            itemDao.refreshFavoriteCount(itemId);
+            return added;
         });
     }
 

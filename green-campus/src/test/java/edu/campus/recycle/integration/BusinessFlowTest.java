@@ -1,16 +1,20 @@
 package edu.campus.recycle.integration;
 
 import edu.campus.recycle.dto.ItemQuery;
+import edu.campus.recycle.config.DatabaseInitializer;
 import edu.campus.recycle.entity.Category;
 import edu.campus.recycle.entity.Item;
 import edu.campus.recycle.entity.TradeFlow;
 import edu.campus.recycle.entity.User;
 import edu.campus.recycle.exception.BusinessRuleException;
+import edu.campus.recycle.exception.DataAccessException;
 import edu.campus.recycle.exception.DuplicateEntityException;
+import edu.campus.recycle.exception.EntityNotFoundException;
 import edu.campus.recycle.exception.PermissionDeniedException;
 import edu.campus.recycle.exception.ValidationException;
 import edu.campus.recycle.support.TestDatabase;
 import edu.campus.recycle.util.DaoFactory;
+import edu.campus.recycle.util.DbUtil;
 import edu.campus.recycle.util.ItemEvent;
 import edu.campus.recycle.util.ItemEventBus;
 import edu.campus.recycle.util.ItemEventListener;
@@ -103,6 +107,113 @@ class BusinessFlowTest {
     }
 
     @Test
+    void publicPublishRejectsStatusThatRequiresAudit() {
+        Item request = item();
+        request.setStatus("ON_SALE");
+        assertThrows(ValidationException.class, () -> services.getItemService().publish(request, List.of()));
+        assertTrue(dao.getItemDao().findAll().isEmpty());
+    }
+
+    @Test
+    void frozenOwnerCannotPublish() {
+        services.getUserService().freezeUser(admin, seller);
+        var error = assertThrows(PermissionDeniedException.class, this::publish);
+        assertEquals("PERM-001", error.getCode());
+        assertTrue(dao.getItemDao().findAll().isEmpty());
+    }
+
+    @Test
+    void onlyOwnerCanEditContentsAndTheChangeIsLogged() {
+        Item stored = onSale();
+        Item request = storedItem(stored.getId());
+        request.setTitle("修改后教材");
+        request.setOwnerId(buyer);
+        request.setStatus("SOLD");
+        var items = services.getItemService();
+        for (int operator : List.of(buyer, admin)) {
+            var error = assertThrows(PermissionDeniedException.class, () -> items.updateItem(request, operator));
+            assertEquals("PERM-011", error.getCode());
+        }
+        assertEquals(stored.getTitle(), storedItem(stored.getId()).getTitle());
+
+        items.updateItem(request, seller);
+        Item updated = storedItem(stored.getId());
+        assertEquals("修改后教材", updated.getTitle());
+        assertEquals(seller, updated.getOwnerId());
+        assertEquals("ON_SALE", updated.getStatus());
+        assertEquals(stored.getAuditRemark(), updated.getAuditRemark());
+        assertTrue(dao.getOperationLogDao().findAll().stream().anyMatch(log -> "ITEM_UPDATED".equals(log.getOperation())
+                && stored.getId().equals(log.getTargetId()) && log.getOperatorId() == seller));
+    }
+
+    @Test
+    void completedItemCannotBeEdited() {
+        TradeFlow flow = agreedFlow();
+        services.getTradeService().confirm(flow.getId(), buyer);
+        Item sold = storedItem(flow.getItemId());
+        String originalTitle = sold.getTitle();
+        sold.setTitle("修改后教材");
+        assertThrows(BusinessRuleException.class, () -> services.getItemService().updateItem(sold, seller));
+        assertEquals(originalTitle, storedItem(sold.getId()).getTitle());
+    }
+
+    @Test
+    void giftPriceIsValidatedBeforePublishAndUpdateWrites() {
+        var items = services.getItemService();
+        Item request = item();
+        request.setTradeType("FREE");
+        var invalid = assertThrows(ValidationException.class, () -> items.publish(request, List.of()));
+        assertEquals("VAL-004", invalid.getCode());
+        assertTrue(dao.getItemDao().findAll().isEmpty());
+
+        request.setPrice(BigDecimal.ZERO);
+        Item gift = items.publish(request, List.of());
+        gift.setPrice(BigDecimal.ONE);
+        assertEquals("VAL-004", assertThrows(ValidationException.class, () -> items.updateItem(gift, seller)).getCode());
+        assertEquals(0, storedItem(gift.getId()).getPrice().signum());
+    }
+
+    @Test
+    void combinesParentCategoryPriceAndConditionBeforePagination() {
+        Category child = new Category(null, "专业教材", categoryId, 0, true, LocalDateTime.now());
+        dao.getCategoryDao().insert(child);
+        Item cheaper = publishForSearch(child.getId(), "20.00", 8);
+        Item pricier = publishForSearch(child.getId(), "50.00", 10);
+        publishForSearch(child.getId(), "30.00", 7);
+        publishForSearch(child.getId(), "51.00", 9);
+        ItemQuery query = new ItemQuery();
+        query.setKeyword("集成测试");
+        query.setCategoryId(categoryId);
+        query.setMinPrice(new BigDecimal("20.00"));
+        query.setMaxPrice(new BigDecimal("50.00"));
+        query.setConditionMin(8);
+        query.setSortBy("PRICE_ASC");
+        query.setPageSize(1);
+        var first = services.getItemService().search(query);
+        assertEquals(2, first.getTotal());
+        assertEquals(2, first.getTotalPages());
+        assertEquals(cheaper.getId(), first.getRecords().get(0).getId());
+        query.setPageNo(2);
+        assertEquals(pricier.getId(), services.getItemService().search(query).getRecords().get(0).getId());
+    }
+
+    @Test
+    void searchRejectsInvalidRangesAndUsesQueryPageSizeDefault() {
+        var items = services.getItemService();
+        ItemQuery query = new ItemQuery();
+        query.setMinPrice(BigDecimal.TEN);
+        query.setMaxPrice(BigDecimal.ONE);
+        assertEquals("VAL-005", assertThrows(ValidationException.class, () -> items.search(query)).getCode());
+        query.setMinPrice(null);
+        query.setMaxPrice(null);
+        query.setConditionMin(11);
+        assertEquals("VAL-005", assertThrows(ValidationException.class, () -> items.search(query)).getCode());
+        query.setConditionMin(null);
+        query.setPageSize(0);
+        assertEquals(10, items.search(query).getPageSize());
+    }
+
+    @Test
     void publishAndAuditAppendDistinctOperationLogEntries() {
         var operationLogDao = dao.getOperationLogDao();
         int before = operationLogDao.findAll().size();
@@ -125,6 +236,48 @@ class BusinessFlowTest {
 
         assertFalse(favorites.toggle(buyer, itemId));
         assertTrue(favorites.listByUser(buyer).isEmpty());
+        assertEquals(0, storedItem(itemId).getFavoriteCount());
+    }
+
+    @Test
+    void missingItemHasFavoriteSpecificCode() {
+        var error = assertThrows(EntityNotFoundException.class, () -> services.getFavoriteService().toggle(buyer, 99));
+        assertEquals("NF-021", error.getCode());
+        assertTrue(dao.getFavoriteDao().findAll().isEmpty());
+    }
+
+    @Test
+    void favoriteCounterFailureRollsBackBothAddingAndRemoving() throws Exception {
+        int itemId = onSale().getId();
+        var favorites = services.getFavoriteService();
+        try (var conn = DbUtil.getInstance().getConnection(); var statement = conn.createStatement()) {
+            String rejectCountChange = """
+                    CREATE TRIGGER reject_favorite_count BEFORE UPDATE OF favorite_count ON item
+                    BEGIN SELECT RAISE(ABORT, 'test counter failure'); END
+                    """;
+            statement.execute(rejectCountChange);
+            assertThrows(DataAccessException.class, () -> favorites.toggle(buyer, itemId));
+            assertTrue(favorites.listByUser(buyer).isEmpty());
+            assertEquals(0, storedItem(itemId).getFavoriteCount());
+
+            statement.execute("DROP TRIGGER reject_favorite_count");
+            assertTrue(favorites.toggle(buyer, itemId));
+            statement.execute(rejectCountChange);
+            assertThrows(DataAccessException.class, () -> favorites.toggle(buyer, itemId));
+            assertEquals(1, favorites.listByUser(buyer).size());
+            assertEquals(1, storedItem(itemId).getFavoriteCount());
+        }
+    }
+
+    @Test
+    void cancelingFavoriteRepairsLegacyCountDrift() {
+        int itemId = onSale().getId();
+        var favorites = services.getFavoriteService();
+        assertTrue(favorites.toggle(buyer, itemId));
+        Item outOfSync = storedItem(itemId);
+        outOfSync.setFavoriteCount(7);
+        dao.getItemDao().update(outOfSync);
+        assertFalse(favorites.toggle(buyer, itemId));
         assertEquals(0, storedItem(itemId).getFavoriteCount());
     }
 
@@ -233,6 +386,78 @@ class BusinessFlowTest {
     }
 
     @Test
+    void freezeCancelsBothActiveStatesAndReleasesOnlyLockedItems() {
+        TradeFlow agreed = agreedFlow();
+        Item second = onSale();
+        TradeFlow applying = services.getTradeService().apply(second.getId(), buyer, "第二笔");
+        services.getUserService().freezeUser(admin, buyer);
+
+        assertEquals("FROZEN", services.getUserService().findById(buyer).getStatus());
+        for (TradeFlow flow : List.of(agreed, applying)) {
+            TradeFlow cancelled = storedFlow(flow);
+            assertEquals("CANCELLED", cancelled.getStatus());
+            assertFalse(cancelled.getCancelReason().isBlank());
+            assertEquals("ON_SALE", storedItem(flow.getItemId()).getStatus());
+        }
+        assertThrows(BusinessRuleException.class,
+                () -> services.getTradeService().confirm(agreed.getId(), seller));
+        var logs = dao.getOperationLogDao().findAll();
+        assertEquals(2, logs.stream().filter(log -> "FLOW_CANCELLED".equals(log.getOperation())).count());
+        assertEquals(1, logs.stream().filter(log -> "FREEZE_USER".equals(log.getOperation())).count());
+        services.getUserService().freezeUser(admin, buyer);
+        assertEquals(logs.size(), dao.getOperationLogDao().findAll().size());
+    }
+
+    @Test
+    void freezeFailureRollsBackAccountAndTradeChanges() {
+        TradeFlow flow = agreedFlow();
+        int before = dao.getOperationLogDao().findAll().size();
+        ItemEventListener listener = event -> {
+            if (event.getType() == ItemEvent.Type.FLOW_CANCELLED) {
+                throw new IllegalStateException("取消流转故障");
+            }
+        };
+        var bus = ItemEventBus.getInstance();
+        bus.register(listener);
+        try {
+            assertThrows(IllegalStateException.class, () -> services.getUserService().freezeUser(admin, seller));
+        } finally {
+            bus.unregister(listener);
+        }
+        assertEquals("ACTIVE", services.getUserService().findById(seller).getStatus());
+        assertEquals("AGREED", storedFlow(flow).getStatus());
+        assertEquals("LOCKED", storedItem(flow.getItemId()).getStatus());
+        assertEquals(before, dao.getOperationLogDao().findAll().size());
+    }
+
+    @Test
+    void frozenSellerCannotReceiveNewTradeApplications() {
+        Item item = onSale();
+        services.getUserService().freezeUser(admin, seller);
+        assertThrows(BusinessRuleException.class,
+                () -> services.getTradeService().apply(item.getId(), buyer, "希望流转"));
+        assertTrue(dao.getTradeFlowDao().findAll().isEmpty());
+    }
+
+    @Test
+    void reopeningExistingDatabaseKeepsBusinessDataAndDoesNotReseed() {
+        TradeFlow flow = agreedFlow();
+        assertTrue(services.getFavoriteService().toggle(buyer, flow.getItemId()));
+        int userCount = dao.getUserDao().findAll().size();
+
+        DbUtil db = DbUtil.getInstance();
+        db.init(db.getJdbcUrl());
+        DatabaseInitializer.initialize(true);
+
+        assertEquals(userCount, dao.getUserDao().findAll().size());
+        assertTrue(services.getUserService().login("test_seller", "LocalTest123").isSuccess());
+        assertEquals("AGREED", storedFlow(flow).getStatus());
+        assertEquals("LOCKED", storedItem(flow.getItemId()).getStatus());
+        assertEquals(1, storedItem(flow.getItemId()).getFavoriteCount());
+        assertEquals(1, services.getFavoriteService().listByUser(buyer).size());
+    }
+
+    @Test
     void statisticsCountOnlyCompletedFlowsAndUseConfiguredFactor() {
         TradeFlow completed = agreedFlow();
         services.getTradeService().confirm(completed.getId(), buyer);
@@ -273,6 +498,16 @@ class BusinessFlowTest {
 
     private Item onSale() {
         var item = publish();
+        services.getItemService().audit(admin, item.getId(), true, "测试审核");
+        return storedItem(item.getId());
+    }
+
+    private Item publishForSearch(int category, String price, int condition) {
+        Item item = item();
+        item.setCategoryId(category);
+        item.setPrice(new BigDecimal(price));
+        item.setConditionLevel(condition);
+        services.getItemService().publish(item, List.of());
         services.getItemService().audit(admin, item.getId(), true, "测试审核");
         return storedItem(item.getId());
     }

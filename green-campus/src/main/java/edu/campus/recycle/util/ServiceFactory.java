@@ -35,13 +35,13 @@ public final class ServiceFactory {
 
     private ServiceFactory() {
         DaoFactory dao = DaoFactory.getInstance();
-        this.userService = new UserServiceImpl(dao.getUserDao(), dao.getCreditLogDao(),
-                dao.getOperationLogDao(), dao.getSystemConfigDao());
         this.itemService = new ItemServiceImpl(dao.getItemDao(), dao.getItemImageDao(),
                 dao.getCategoryDao(), dao.getUserDao(), dao.getTradeFlowDao(), dao.getSystemConfigDao());
         this.favoriteService = new FavoriteServiceImpl(dao.getFavoriteDao(), dao.getItemDao());
         this.tradeService = new TradeServiceImpl(dao.getTradeFlowDao(), dao.getItemDao(), dao.getUserDao(),
                 dao.getTradeMessageDao(), dao.getReviewDao());
+        this.userService = new UserServiceImpl(dao.getUserDao(), dao.getCreditLogDao(),
+                dao.getOperationLogDao(), dao.getSystemConfigDao(), dao.getTradeFlowDao(), tradeService);
         this.reviewService = new ReviewServiceImpl(dao.getReviewDao(), dao.getTradeFlowDao(),
                 dao.getUserDao(), dao.getCreditLogDao(), dao.getSystemConfigDao());
         this.statisticService = new StatisticServiceImpl(dao.getTradeFlowDao(), dao.getCategoryDao(),

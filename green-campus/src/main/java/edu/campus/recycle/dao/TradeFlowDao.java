@@ -30,6 +30,9 @@ public interface TradeFlowDao extends BaseDao<TradeFlow, Integer> {
      */
     Optional<TradeFlow> findActiveByItemId(int itemId);
 
+    /** 返回该用户作为出让方或受让方的全部在途流转，供冻结事务使用。 */
+    List<TradeFlow> findActiveByUserId(int userId);
+
     /**
      * 按主键查询流转。
      *

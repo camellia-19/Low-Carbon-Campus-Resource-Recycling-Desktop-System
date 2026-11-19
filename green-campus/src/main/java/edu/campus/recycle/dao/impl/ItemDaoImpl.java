@@ -192,6 +192,10 @@ public class ItemDaoImpl extends AbstractJdbcDao<Item> implements ItemDao {
             sql.append(" AND i.price <= ?");
             params.add(query.getMaxPrice());
         }
+        if (query.getConditionMin() != null) {
+            sql.append(" AND i.condition_level >= ?");
+            params.add(query.getConditionMin());
+        }
         if (query.getTradeType() != null && !query.getTradeType().isBlank()) {
             sql.append(" AND i.trade_type = ?");
             params.add(query.getTradeType());
@@ -231,6 +235,13 @@ public class ItemDaoImpl extends AbstractJdbcDao<Item> implements ItemDao {
     public int increaseFavoriteCount(int itemId, int delta) {
         return executeUpdate("UPDATE " + TABLE
                 + " SET favorite_count = MAX(0, favorite_count + ?) WHERE id = ?", delta, itemId);
+    }
+
+    @Override
+    public int refreshFavoriteCount(int itemId) {
+        return executeUpdate("UPDATE " + TABLE
+                + " SET favorite_count = (SELECT COUNT(*) FROM favorite WHERE item_id = ?) WHERE id = ?",
+                itemId, itemId);
     }
 
     @Override

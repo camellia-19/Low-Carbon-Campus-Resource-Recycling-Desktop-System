@@ -3,6 +3,7 @@ package edu.campus.recycle.service.impl;
 import edu.campus.recycle.dao.CreditLogDao;
 import edu.campus.recycle.dao.OperationLogDao;
 import edu.campus.recycle.dao.SystemConfigDao;
+import edu.campus.recycle.dao.TradeFlowDao;
 import edu.campus.recycle.dao.UserDao;
 import edu.campus.recycle.dto.LoginResult;
 import edu.campus.recycle.dto.UserCreditDTO;
@@ -18,6 +19,7 @@ import edu.campus.recycle.exception.EntityNotFoundException;
 import edu.campus.recycle.exception.PermissionDeniedException;
 import edu.campus.recycle.exception.ValidationException;
 import edu.campus.recycle.service.UserService;
+import edu.campus.recycle.service.TradeService;
 import edu.campus.recycle.util.CreditRules;
 import edu.campus.recycle.util.DbUtil;
 import edu.campus.recycle.util.PasswordUtil;
@@ -26,8 +28,8 @@ import edu.campus.recycle.util.Validator;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -53,13 +55,18 @@ public class UserServiceImpl implements UserService {
     private final CreditLogDao creditLogDao;
     private final OperationLogDao operationLogDao;
     private final SystemConfigDao systemConfigDao;
+    private final TradeFlowDao tradeFlowDao;
+    private final TradeService tradeService;
 
     public UserServiceImpl(UserDao userDao, CreditLogDao creditLogDao,
-                           OperationLogDao operationLogDao, SystemConfigDao systemConfigDao) {
+                           OperationLogDao operationLogDao, SystemConfigDao systemConfigDao,
+                           TradeFlowDao tradeFlowDao, TradeService tradeService) {
         this.userDao = Objects.requireNonNull(userDao, "userDao");
         this.creditLogDao = Objects.requireNonNull(creditLogDao, "creditLogDao");
         this.operationLogDao = Objects.requireNonNull(operationLogDao, "operationLogDao");
         this.systemConfigDao = Objects.requireNonNull(systemConfigDao, "systemConfigDao");
+        this.tradeFlowDao = Objects.requireNonNull(tradeFlowDao, "tradeFlowDao");
+        this.tradeService = Objects.requireNonNull(tradeService, "tradeService");
     }
 
     @Override
@@ -67,7 +74,7 @@ public class UserServiceImpl implements UserService {
                          String role, String college, String contact)
             throws ValidationException, DuplicateEntityException {
         Validator.checkUsername(username);
-        Validator.checkPassword(rawPassword);
+        requireStrongPassword(rawPassword);
         if (realName == null || realName.trim().length() < 2 || realName.trim().length() > 20) {
             throw ValidationException.of("真实姓名长度需为 2-20 个字符");
         }
@@ -83,7 +90,7 @@ public class UserServiceImpl implements UserService {
             throw DuplicateEntityException.of("用户名已被占用：" + username.trim());
         }
         if (trimmedStudentNo != null && userDao.existsByStudentNo(trimmedStudentNo)) {
-            throw DuplicateEntityException.of("学号已被注册：" + trimmedStudentNo);
+            throw DuplicateEntityException.ofCode("DUP-002", "学号已被注册");
         }
         LocalDateTime now = LocalDateTime.now().withNano(0);
         String salt = PasswordUtil.generateSalt();
@@ -118,58 +125,77 @@ public class UserServiceImpl implements UserService {
         }
         User user = userDao.findByUsername(username.trim())
                 .orElseThrow(() -> AuthenticationException.of("用户名或密码错误"));
+        requireActive(user);
         LocalDateTime now = LocalDateTime.now().withNano(0);
         if (user.getLockedUntil() != null && user.getLockedUntil().isAfter(now)) {
-            long remainMinutes = Math.max(1L, Duration.between(now, user.getLockedUntil()).toMinutes() + 1L);
+            long remainMinutes = (Duration.between(now, user.getLockedUntil()).toSeconds() + 59) / 60;
             throw AccountLockedException.of("账号已锁定，请 " + remainMinutes + " 分钟后再试");
         }
-        if (!UserStatus.ACTIVE.getCode().equals(user.getStatus())) {
-            throw AuthenticationException.of("账号状态异常（" + user.getStatus() + "），请联系管理员");
-        }
         if (!PasswordUtil.verify(rawPassword, user.getSalt(), user.getPasswordHash())) {
-            int maxFail = systemConfigDao.getInt("login.max_fail", DEFAULT_MAX_FAIL);
-            int failCount = (user.getFailCount() == null ? 0 : user.getFailCount()) + 1;
-            LocalDateTime lockedUntil = null;
-            if (failCount >= maxFail) {
-                int lockMinutes = systemConfigDao.getInt("login.lock_minutes", DEFAULT_LOCK_MINUTES);
-                lockedUntil = now.plusMinutes(lockMinutes);
-            }
-            userDao.updateFailCount(user.getId(), failCount, lockedUntil);
-            if (lockedUntil != null) {
-                LOG.warning(() -> "账号锁定：userId=" + user.getId() + "，失败次数=" + failCount);
-                throw AccountLockedException.of("连续 " + failCount + " 次密码错误，账号已锁定，请稍后再试");
-            }
-            throw AuthenticationException.of("用户名或密码错误，剩余尝试次数：" + (maxFail - failCount));
+            rejectIncorrectPassword(user, now);
         }
-        userDao.updateLoginSuccess(user.getId(), now);
-        user.setFailCount(0);
-        user.setLockedUntil(null);
-        user.setLastLoginAt(now);
-        writeLog(user.getId(), "LOGIN", "USER", user.getId(), "登录成功");
+        DbUtil.getInstance().executeInTransaction(conn -> {
+            requireActive(findById(user.getId()));
+            userDao.updateLoginSuccess(user.getId(), now);
+            writeLog(user.getId(), "LOGIN", "USER", user.getId(), "登录成功");
+            return null;
+        });
         return LoginResult.ofSuccess(user, now);
     }
 
     @Override
     public void changePassword(int userId, String oldPwd, String newPwd)
             throws AuthenticationException, ValidationException {
-        User user = userDao.findById(userId)
-                .orElseThrow(() -> EntityNotFoundException.of("用户不存在：id=" + userId));
-        if (!PasswordUtil.verify(oldPwd, user.getSalt(), user.getPasswordHash())) {
-            throw AuthenticationException.of("原密码不正确");
-        }
-        Validator.checkPassword(newPwd);
-        if (oldPwd != null && oldPwd.equals(newPwd)) {
-            throw ValidationException.of("新密码不能与原密码相同");
-        }
-        String salt = PasswordUtil.generateSalt();
-        user.setSalt(salt);
-        user.setPasswordHash(PasswordUtil.hash(newPwd, salt));
-        user.setUpdatedAt(LocalDateTime.now().withNano(0));
         DbUtil.getInstance().executeInTransaction(conn -> {
+            User user = findById(userId);
+            requireActive(user);
+            if (!PasswordUtil.verify(oldPwd, user.getSalt(), user.getPasswordHash())) {
+                throw AuthenticationException.ofCode("VAL-003", "原密码不正确");
+            }
+            requireStrongPassword(newPwd);
+            if (oldPwd.equals(newPwd)) {
+                throw ValidationException.ofCode("VAL-008", "新密码不能与原密码相同");
+            }
+            String salt = PasswordUtil.generateSalt();
+            user.setSalt(salt);
+            user.setPasswordHash(PasswordUtil.hash(newPwd, salt));
+            user.setUpdatedAt(LocalDateTime.now().withNano(0));
+            user.setFailCount(0);
+            user.setLockedUntil(null);
             userDao.update(user);
-            writeLog(userId, "CHANGE_PASSWORD", "USER", userId, "修改密码");
+            writeLog(userId, "CHG_PWD", "USER", userId, "修改密码");
             return null;
         });
+    }
+
+    private void rejectIncorrectPassword(User user, LocalDateTime now) {
+        int maxFail = systemConfigDao.getInt("login.max_fail", DEFAULT_MAX_FAIL);
+        int previousFailures = user.getLockedUntil() != null || user.getFailCount() == null
+                ? 0 : user.getFailCount();
+        int failures = previousFailures + 1;
+        if (failures >= maxFail) {
+            int lockMinutes = systemConfigDao.getInt("login.lock_minutes", DEFAULT_LOCK_MINUTES);
+            userDao.updateFailCount(user.getId(), failures, now.plusMinutes(lockMinutes));
+            LOG.warning(() -> "账号锁定：userId=" + user.getId() + "，失败次数=" + failures);
+            throw AccountLockedException.of("账号已锁定，请 " + lockMinutes + " 分钟后再试");
+        }
+        userDao.updateFailCount(user.getId(), failures, null);
+        throw AuthenticationException.of("用户名或密码错误，剩余尝试次数：" + (maxFail - failures));
+    }
+
+    private static void requireActive(User user) {
+        if (UserStatus.FROZEN.getCode().equals(user.getStatus())) {
+            throw AuthenticationException.ofCode("BR-03", "账号已冻结，请联系管理员");
+        }
+        if (!UserStatus.ACTIVE.getCode().equals(user.getStatus())) {
+            throw AuthenticationException.of("账号不可用，请联系管理员");
+        }
+    }
+
+    private static void requireStrongPassword(String password) {
+        if (!Validator.isValidPassword(password)) {
+            throw ValidationException.ofCode("VAL-002", "口令必须为 8–20 位且同时包含字母与数字");
+        }
     }
 
     @Override
@@ -187,16 +213,20 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public void freezeUser(int operatorId, int userId) throws PermissionDeniedException, BusinessRuleException {
-        requireAdmin(operatorId);
-        User target = findById(userId);
-        if (Role.ADMIN.getCode().equals(target.getRole())) {
-            throw BusinessRuleException.of("BR-10", "管理员账号不可冻结");
-        }
-        if (UserStatus.FROZEN.getCode().equals(target.getStatus())) {
-            return;
-        }
         DbUtil.getInstance().executeInTransaction(conn -> {
+            requireAdmin(operatorId);
+            User target = findById(userId);
+            if (Role.ADMIN.getCode().equals(target.getRole())
+                    || UserStatus.CANCELLED.getCode().equals(target.getStatus())) {
+                throw BusinessRuleException.of("BR-10", "该账号不可冻结");
+            }
+            if (UserStatus.FROZEN.getCode().equals(target.getStatus())) {
+                return null;
+            }
             userDao.updateStatus(userId, UserStatus.FROZEN.getCode());
+            for (var flow : tradeFlowDao.findActiveByUserId(userId)) {
+                tradeService.cancel(flow.getId(), operatorId, "流转参与方账号冻结");
+            }
             writeLog(operatorId, "FREEZE_USER", "USER", userId, "冻结用户：" + target.getUsername());
             return null;
         });
@@ -204,12 +234,15 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public void unfreezeUser(int operatorId, int userId) throws PermissionDeniedException {
-        requireAdmin(operatorId);
-        User target = findById(userId);
-        if (UserStatus.ACTIVE.getCode().equals(target.getStatus())) {
-            return;
-        }
         DbUtil.getInstance().executeInTransaction(conn -> {
+            requireAdmin(operatorId);
+            User target = findById(userId);
+            if (UserStatus.ACTIVE.getCode().equals(target.getStatus())) {
+                return null;
+            }
+            if (!UserStatus.FROZEN.getCode().equals(target.getStatus())) {
+                throw BusinessRuleException.of("BR-10", "仅被冻结账号可解冻");
+            }
             userDao.updateStatus(userId, UserStatus.ACTIVE.getCode());
             writeLog(operatorId, "UNFREEZE_USER", "USER", userId, "解冻用户：" + target.getUsername());
             return null;
@@ -240,34 +273,31 @@ public class UserServiceImpl implements UserService {
     private User requireAdmin(int operatorId) throws PermissionDeniedException {
         User operator = userDao.findById(operatorId)
                 .orElseThrow(() -> EntityNotFoundException.of("操作用户不存在：id=" + operatorId));
-        if (!Role.ADMIN.getCode().equals(operator.getRole())) {
+        if (!Role.ADMIN.getCode().equals(operator.getRole()) || !UserStatus.ACTIVE.getCode().equals(operator.getStatus())) {
             throw PermissionDeniedException.of("仅管理员可执行该操作");
         }
         return operator;
     }
 
-    /**
-     * 追加操作日志（BR-11 只追加）；日志失败不阻断主流程。
-     */
+    /** 追加操作日志（BR-11），由调用方的事务一并提交。 */
     private void writeLog(Integer operatorId, String operation, String targetType, Integer targetId, String detail) {
-        try {
-            OperationLog log = new OperationLog();
-            log.setOperatorId(operatorId);
-            log.setOperation(operation);
-            log.setTargetType(targetType);
-            log.setTargetId(targetId);
-            log.setDetail(detail);
-            log.setIp("127.0.0.1");
-            log.setCreatedAt(LocalDateTime.now().withNano(0));
-            operationLogDao.insert(log);
-        } catch (RuntimeException e) {
-            LOG.log(Level.WARNING, "写操作日志失败（不影响主流程）：" + operation, e);
-        }
+        OperationLog log = new OperationLog();
+        log.setOperatorId(operatorId);
+        log.setOperation(operation);
+        log.setTargetType(targetType);
+        log.setTargetId(targetId);
+        log.setDetail(detail);
+        log.setIp("127.0.0.1");
+        log.setCreatedAt(LocalDateTime.now().withNano(0));
+        operationLogDao.insert(log);
     }
 
     private String normalizeRole(String role) {
         String code = role == null || role.trim().isEmpty()
-                ? Role.STUDENT.getCode() : role.trim().toUpperCase();
+                ? Role.STUDENT.getCode() : role.trim().toUpperCase(Locale.ROOT);
+        if (Role.ADMIN.getCode().equals(code)) {
+            throw PermissionDeniedException.of("管理员账号由受信初始化提供");
+        }
         for (Role item : Role.values()) {
             if (item.getCode().equals(code)) {
                 return code;

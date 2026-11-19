@@ -2,7 +2,7 @@
 
 《软件构造》课程分组实验，3人小组、8周4个迭代。技术栈：Java 17、Maven、SQLite/JDBC、Swing、JUnit 5。
 
-面向校园的闲置物品流转桌面应用，覆盖发布、检索收藏、意向沟通、流转成交、互评与信用分、统计与CSV导出。当前处于迭代一，成员1已交付设计与参考实现，成员2已完成业务规则核对、测试基线与走查。Swing GUI由成员3继续开发。
+面向校园的闲置物品流转桌面应用，覆盖发布、检索收藏、意向沟通、流转成交、互评与信用分、统计与CSV导出。成员2已交付迭代二用户、物品、收藏业务及回归测试。Swing GUI由成员3继续开发。
 
 ## 仓库结构
 
@@ -28,7 +28,8 @@ Low-Carbon-Campus-Resource-Recycling-Desktop-System/
 └─ docs/
    ├─ 2026软件构造分组实验v3.docx # 老师原始实验要求
    ├─ 迭代一-成员1/              # 需求、接口基线、UML、数据库设计及校验工具
-   └─ 迭代一-成员2/              # 规则核对、测试计划、代码走查及实测记录
+   ├─ 迭代一-成员2/              # 规则核对、测试计划、代码走查及实测记录
+   └─ 迭代二-成员2/              # 核心业务交付、测试报告与接口交接
 ```
 
 目录迁移后，Java工程和SQL脚本已独立置于仓库根目录。成员1历史文档中的旧路径及原电脑环境记录保留供追溯，当前运行方式以本文件和[部署说明](green-campus/部署说明.md)为准。历史提示词仅用于了解当时的工作过程。
@@ -38,6 +39,7 @@ Low-Carbon-Campus-Resource-Recycling-Desktop-System/
 - [实验要求](docs/2026软件构造分组实验v3.docx)
 - [成员1交付说明与历史验证记录](docs/迭代一-成员1/README-交付说明.md)
 - [成员2交付说明与验证记录](docs/迭代一-成员2/README-交付说明.md)
+- [成员2迭代二交付](docs/迭代二-成员2/README-交付说明.md)
 - [共享契约](docs/迭代一-成员1/_共享契约-实体与接口基线.md)：字段、接口、异常和业务规则基线；阅读时结合第13节最新裁决。
 - [需求规格](docs/迭代一-成员1/docs/01-需求规格说明书.docx)
 - [模块与接口规范](docs/迭代一-成员1/docs/02-模块化设计与接口规范.docx)
@@ -52,7 +54,7 @@ Low-Carbon-Campus-Resource-Recycling-Desktop-System/
 ```powershell
 cd green-campus
 mvn test
-mvn package
+mvn -Pcoverage verify
 java -jar target/green-campus-1.0.0.jar
 ```
 
@@ -65,7 +67,7 @@ javac --release 17 -encoding UTF-8 -sourcepath src/main/java -d build/classes -c
 java -cp "build/classes;src/main/resources;lib/sqlite-jdbc-3.42.0.0.jar" edu.campus.recycle.Main
 ```
 
-运行工作目录必须是 `green-campus`，配置与默认值均通过 `../db/schema.sql`、`../db/seed-data.sql` 查找脚本。手工运行时将 `src/main/resources` 加入 classpath。当前 Main 每次启动会重建 `green-campus/data/greencampus.db`，演示请使用独立副本。
+运行工作目录为 `green-campus`，配置与默认值均通过 `../db/schema.sql`、`../db/seed-data.sql` 查找脚本。手工运行时将 `src/main/resources` 加入 classpath。控制台 Main 为每次演示创建独立临时库和 CSV，并在终端显示路径。应用启动入口打开配置的持久化数据库，首次建表，重复启动保留数据。
 
 ## 交付物校验
 

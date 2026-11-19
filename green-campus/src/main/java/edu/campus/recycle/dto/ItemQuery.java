@@ -4,7 +4,7 @@ import java.math.BigDecimal;
 
 /**
  * 物品检索条件对象（契约第 4 节），承载 keyword/categoryId/价格区间/交易方式/状态/
- * 发布者/排序/分页共 10 个可选条件，避免超长参数表。
+ * 成色下限/发布者/排序/分页等可选条件，避免超长参数表。
  */
 public class ItemQuery {
 
@@ -16,6 +16,8 @@ public class ItemQuery {
     private BigDecimal minPrice;
     /** 价格上限（含） */
     private BigDecimal maxPrice;
+    /** 成色下限（含），空值表示不限。 */
+    private Integer conditionMin;
     /** 交易方式：SELL/EXCHANGE/FREE */
     private String tradeType;
     /** 物品状态，默认仅检索 ON_SALE */
@@ -33,7 +35,7 @@ public class ItemQuery {
     }
 
     public int getOffset() {
-        return (Math.max(pageNo, 1) - 1) * getLimit();
+        return (int) Math.min((Math.max(pageNo, 1) - 1L) * getLimit(), Integer.MAX_VALUE);
     }
 
     public int getLimit() {
@@ -75,6 +77,14 @@ public class ItemQuery {
 
     public void setMaxPrice(BigDecimal maxPrice) {
         this.maxPrice = maxPrice;
+    }
+
+    public Integer getConditionMin() {
+        return conditionMin;
+    }
+
+    public void setConditionMin(Integer conditionMin) {
+        this.conditionMin = conditionMin;
     }
 
     public String getTradeType() {

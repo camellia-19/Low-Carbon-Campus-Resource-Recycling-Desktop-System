@@ -4,6 +4,8 @@ import edu.campus.recycle.entity.User;
 import edu.campus.recycle.exception.AccountLockedException;
 import edu.campus.recycle.exception.AuthenticationException;
 import edu.campus.recycle.exception.DuplicateEntityException;
+import edu.campus.recycle.exception.PermissionDeniedException;
+import edu.campus.recycle.exception.ValidationException;
 import edu.campus.recycle.service.UserService;
 import edu.campus.recycle.support.TestDatabase;
 import edu.campus.recycle.util.DaoFactory;
@@ -61,6 +63,37 @@ class UserServiceTest {
     }
 
     @Test
+    void duplicateStudentNumberHasItsOwnErrorCode() {
+        User user = register();
+        var error = assertThrows(DuplicateEntityException.class, () -> users.register(
+                "student_other", PASSWORD, "测试学生", user.getStudentNo(), null, null, null));
+        assertEquals("DUP-002", error.getCode());
+        assertFalse(error.getUserMessage().contains(user.getStudentNo()));
+        assertEquals(1, dao.getUserDao().findAll().size());
+    }
+
+    @Test
+    void selfRegistrationRejectsReservedRole() {
+        assertThrows(PermissionDeniedException.class,
+                () -> users.register("student_test", PASSWORD, "测试学生", "20260001", "ADMIN", null, null));
+        assertTrue(dao.getUserDao().findAll().isEmpty());
+    }
+
+    @Test
+    void frozenAccountCannotLoginUntilAdministratorUnfreezesIt() {
+        User user = register();
+        User admin = users.register("test_operator", PASSWORD, "测试管理员", null, null, null, null);
+        admin.setRole("ADMIN");
+        dao.getUserDao().update(admin);
+        assertThrows(PermissionDeniedException.class, () -> users.freezeUser(user.getId(), user.getId()));
+        users.freezeUser(admin.getId(), user.getId());
+        var error = assertThrows(AuthenticationException.class, () -> users.login(user.getUsername(), PASSWORD));
+        assertEquals("BR-03", error.getCode());
+        users.unfreezeUser(admin.getId(), user.getId());
+        assertTrue(users.login(user.getUsername(), PASSWORD).isSuccess());
+    }
+
+    @Test
     void fifthConsecutiveFailureLocksEvenWithCorrectPassword() {
         User user = register();
         for (int attempt = 1; attempt <= 4; attempt++) {
@@ -100,6 +133,43 @@ class UserServiceTest {
     }
 
     @Test
+    void invalidPasswordChangesKeepDigestAndReturnSpecificCodes() {
+        User user = register();
+        var wrongOld = assertThrows(AuthenticationException.class,
+                () -> users.changePassword(user.getId(), "wrong", "UpdatedTest123"));
+        assertEquals("VAL-003", wrongOld.getCode());
+        var weakNew = assertThrows(ValidationException.class,
+                () -> users.changePassword(user.getId(), PASSWORD, "password"));
+        assertEquals("VAL-002", weakNew.getCode());
+        var unchanged = assertThrows(ValidationException.class,
+                () -> users.changePassword(user.getId(), PASSWORD, PASSWORD));
+        assertEquals("VAL-008", unchanged.getCode());
+        assertEquals(user.getPasswordHash(), users.findById(user.getId()).getPasswordHash());
+    }
+
+    @Test
+    void passwordChangeClearsFailureStateAndWritesAuditLog() {
+        User user = register();
+        dao.getUserDao().updateFailCount(user.getId(), 5, LocalDateTime.now().minusMinutes(1));
+        users.changePassword(user.getId(), PASSWORD, "UpdatedTest123");
+        User stored = users.findById(user.getId());
+        assertEquals(0, stored.getFailCount());
+        assertNull(stored.getLockedUntil());
+        assertTrue(dao.getOperationLogDao().findAll().stream().anyMatch(log -> "CHG_PWD".equals(log.getOperation())
+                && user.getId().equals(log.getOperatorId())));
+    }
+
+    @Test
+    void expiredLockStartsNewFailureWindow() {
+        User user = register();
+        dao.getUserDao().updateFailCount(user.getId(), 5, LocalDateTime.now().minusMinutes(1));
+        var error = assertThrows(AuthenticationException.class, () -> users.login(user.getUsername(), "wrong"));
+        assertEquals("AUTH-001", error.getCode());
+        assertEquals(1, users.findById(user.getId()).getFailCount());
+        assertNull(users.findById(user.getId()).getLockedUntil());
+    }
+
+    @Test
     void creditUpdatesApplyBoundsAndKeepSnapshots() {
         User user = register();
         users.updateCredit(user.getId(), 80, null, "测试上限");
@@ -109,6 +179,9 @@ class UserServiceTest {
 
         var snapshots = dao.getCreditLogDao().findByUserId(user.getId(), 10);
         assertEquals(2, snapshots.size());
+        var credit = users.getCredit(user.getId());
+        assertEquals(0, credit.getCreditScore());
+        assertEquals(2, credit.getChangeCount());
         assertTrue(snapshots.stream().anyMatch(log -> log.getDelta() == 50 && log.getScoreAfter() == 150));
         assertTrue(snapshots.stream().anyMatch(log -> log.getDelta() == -150 && log.getScoreAfter() == 0));
     }

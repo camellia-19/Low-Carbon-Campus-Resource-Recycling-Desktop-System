@@ -55,7 +55,7 @@ public final class ConfigManager {
         properties.setProperty(KEY_SCHEMA, "../db/schema.sql");
         properties.setProperty(KEY_SEED, "../db/seed-data.sql");
         properties.setProperty(KEY_IMAGE_DIR, "data/images");
-        properties.setProperty(KEY_SEED_ON_START, "true");
+        properties.setProperty(KEY_SEED_ON_START, "false");
         properties.setProperty("app.name", "绿色校园闲置物品循环流转平台");
         properties.setProperty("app.version", "1.0.0");
     }

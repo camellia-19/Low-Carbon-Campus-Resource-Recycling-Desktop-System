@@ -25,9 +25,12 @@ import edu.campus.recycle.service.ItemService;
 import edu.campus.recycle.service.StatisticService;
 import edu.campus.recycle.service.UserService;
 import edu.campus.recycle.util.DaoFactory;
+import edu.campus.recycle.util.DbUtil;
 import edu.campus.recycle.util.ServiceFactory;
 
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -57,11 +60,13 @@ public final class Main {
 
     public static void main(String[] args) {
         System.out.println("============================================================");
-        System.out.println(" 绿色校园闲置物品循环流转平台 · 迭代一（成员1 数据层 D7 骨架）");
+        System.out.println(" 绿色校园闲置物品循环流转平台 · 控制台演示");
         System.out.println(" 技术栈：Java 17 + SQLite(JDBC) + 手写 DAO + 工厂/策略/观察者/模板方法");
         System.out.println("============================================================");
         try {
-            runDemo();
+            runDemo(Files.createTempDirectory("green-campus-demo-"));
+        } catch (IOException e) {
+            throw new IllegalStateException("无法创建演示目录", e);
         } catch (AppException e) {
             System.out.println("[业务异常] code=" + e.getCode() + "，" + e.getUserMessage());
             LOG.warning(() -> "演示中断：" + e.getCode());
@@ -71,7 +76,7 @@ public final class Main {
         }
     }
 
-    private static void runDemo() {
+    private static void runDemo(Path demoDirectory) {
         ServiceFactory factory = ServiceFactory.getInstance();
         UserService userService = factory.getUserService();
         ItemService itemService = factory.getItemService();
@@ -85,11 +90,12 @@ public final class Main {
         ReviewController reviewController = new ReviewController();
         StatisticController statisticController = new StatisticController();
 
-        // 1. 初始化数据库（执行 schema + seed）
+        // 1. 新建本次演示专用的数据库，与正式启动入口隔离
         DbConfig config = DbConfig.getInstance();
-        config.applyToDbUtil();
-        DatabaseInitializer.initialize();
-        System.out.println("[1/9] 数据库初始化完成：" + config.getJdbcUrl());
+        String demoUrl = "jdbc:sqlite:" + demoDirectory.resolve("demo.db");
+        DbUtil.getInstance().init(demoUrl);
+        DatabaseInitializer.initialize(true);
+        System.out.println("[1/9] 数据库初始化完成：" + demoUrl);
         System.out.println("      system_config 项数：" + config.loadSystemConfigMap().size());
         List<Category> categories = DaoFactory.getInstance().getCategoryDao().findEnabled();
         System.out.println("      可用分类数：" + categories.size()
@@ -126,7 +132,7 @@ public final class Main {
         item.setOriginalPrice(new BigDecimal("89.00"));
         item.setConditionLevel(8);
         item.setTags("数据库,教材,计算机");
-        Item published = itemService.publish(item, List.of("data/images/demo-book-1.jpg"));
+        Item published = itemService.publish(item, List.of());
         System.out.println("[4/9] 发布物品成功：itemId=" + published.getId()
                 + "，状态=" + published.getStatus() + "（默认待审核）"
                 + "，上架时间=" + published.getPublishedAt());
@@ -191,7 +197,7 @@ public final class Main {
 
         // 9. 统计与 CSV 导出（经 StatisticController）
         LocalDateTime from = LocalDateTime.of(2026, 1, 1, 0, 0, 0);
-        LocalDateTime to = LocalDateTime.of(2026, 12, 31, 23, 59, 59);
+        LocalDateTime to = LocalDateTime.now().plusDays(1);
         List<StatisticsDTO> statistics = statisticController.statisticsByCategory(from, to);
         System.out.println("[9/9] 完成流转统计（按一级分类）：");
         for (StatisticsDTO dto : statistics) {
@@ -200,7 +206,7 @@ public final class Main {
                     + String.format("%.2f", dto.getCarbonReduction()) + " kgCO2e");
         }
         System.out.println("      碳减排总量：" + statisticController.carbonReduction(from, to) + " kgCO2e");
-        String csvPath = statisticController.exportCsv(Path.of("data", "export", "statistics.csv"), from, to);
+        String csvPath = statisticController.exportCsv(demoDirectory.resolve("statistics.csv"), from, to);
         System.out.println("      统计 CSV 已导出：" + csvPath);
         System.out.println("============================================================");
         System.out.println(" 演示流程全部通过（注册/登录/发布/审核/检索/流转/成交事务/评价/收藏/统计）");
